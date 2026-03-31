@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from src.core.schemas import (
+from core.schemas import (
     ActionCard,
     ActionCardStatus,
     AgendaItem,
@@ -17,13 +17,13 @@ from src.core.schemas import (
     KanbanBoard,
     KanbanStatus,
     MeetingClass,
-    RollCall,
     RoleAssignment,
+    RollCall,
     SessionState,
     SessionSubstate,
     validate_packet,
 )
-from src.core.schemas.constants import (
+from core.schemas.constants import (
     AGENT_TIMEOUT_SECONDS,
     ARCHIVE_FILENAME,
     BUNDLE_ID_PAD_WIDTH,

@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.schemas import RollCall, SessionPacket
-from src.core.schemas.constants import PACKET_FILENAME
+from core.schemas import RollCall, SessionPacket
 
 
 @pytest.fixture
@@ -31,23 +30,8 @@ def valid_roll_call() -> RollCall:
 
 @pytest.fixture
 def tmp_data_root(tmp_path: Path) -> Path:
-    """Create a temp data root with a default config placeholder."""
+    """Create a temp data root with config/ dir."""
 
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    providers_path = config_dir / "providers.yaml"
-    providers_path.write_text("# placeholder providers config\n")
     return tmp_path
-
-
-@pytest.fixture
-def tmp_session_dir(tmp_data_root: Path, valid_packet: SessionPacket) -> Path:
-    """Create a session dir with packet saved."""
-
-    session_dir = tmp_data_root / "projects" / valid_packet.project_name / "sessions" / "sess_test"
-    session_dir.mkdir(parents=True, exist_ok=True)
-    packet_path = session_dir / PACKET_FILENAME
-    packet_path.write_text(
-        json.dumps(valid_packet.model_dump(by_alias=True, mode="json"), indent=2)
-    )
-    return session_dir
