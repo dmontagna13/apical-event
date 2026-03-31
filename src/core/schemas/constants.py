@@ -1,0 +1,32 @@
+"""Shared constants used across modules."""
+
+# Network
+DEFAULT_PORT = 8420
+AGENT_TIMEOUT_SECONDS = 120
+MODERATOR_RETRY_MAX = 3
+MODERATOR_RETRY_BACKOFF = [2, 4, 8]  # seconds
+TOOL_CALL_RETRY_MAX = 3
+CONSENSUS_RETRY_MAX = 2
+HEALTH_CHECK_MAX_TOKENS = 1
+
+# Context budget
+CONTEXT_SAFETY_MARGIN_MIN = 4096
+CONTEXT_SAFETY_MARGIN_RATIO = 0.05
+SUMMARY_MAX_TOKENS = 256
+TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4
+
+# Session
+SESSION_ID_PREFIX = "sess_"
+SESSION_ID_HEX_LENGTH = 8
+BUNDLE_ID_PREFIX = "bundle_"
+BUNDLE_ID_PAD_WIDTH = 3
+
+# File paths (relative to session dir)
+PACKET_FILENAME = "packet.json"
+ROLL_CALL_FILENAME = "roll_call.json"
+STATE_FILENAME = "state.json"
+JOURNALS_DIR = "journals"
+BUNDLES_DIR = "bundles"
+OUTPUT_DIR = "output"
+CONSENSUS_FILENAME = "consensus.json"
+ARCHIVE_FILENAME = "session_archive.json"

@@ -1,0 +1,9 @@
+{
+  "assignments": [
+    {"role_id": "RG-FAC", "provider": "openai", "model": "gpt-4o"},
+    {"role_id": "RG-CRIT", "provider": "gemini", "model": "gemini-2.5-pro"},
+    {"role_id": "RE-ARCH", "provider": "anthropic", "model": "claude-3.5-sonnet"},
+    {"role_id": "RR-LEAD", "provider": "deepseek", "model": "deepseek-chat"}
+  ],
+  "confirmed_at": "2026-02-20T14:35:00Z"
+}

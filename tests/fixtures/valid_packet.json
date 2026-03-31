@@ -1,0 +1,116 @@
+{
+  "$schema": "https://apical.local/schemas/session-packet/v1",
+  "packet_id": "BP-2026-02-20-005",
+  "project_name": "apical-event",
+  "created_at": "2026-02-20T14:30:00Z",
+  "meeting_class": "DISCOVERY",
+  "objective": "Group decisions into primary domains, define responsibilities/boundaries, enumerate interface candidates, and produce a Decision Roadmap.",
+  "constraints": [
+    "Do not propose module-level decomposition within domains.",
+    "Do not select technologies, frameworks, or vendors.",
+    "Do not create task-level plans."
+  ],
+  "roles": [
+    {
+      "role_id": "RG-FAC",
+      "label": "Facilitator / Convergence Driver",
+      "is_moderator": true,
+      "behavioral_directive": "Drive domain mapping and decision roadmap creation; enforce output contract."
+    },
+    {
+      "role_id": "RG-CRIT",
+      "label": "The Critic / Adversarial Reviewer",
+      "is_moderator": false,
+      "behavioral_directive": "Identify missing boundaries, ambiguous ownership, or interface risks in domain mapping."
+    },
+    {
+      "role_id": "RE-ARCH",
+      "label": "Systems Architect",
+      "is_moderator": false,
+      "behavioral_directive": "Propose domain structure from a systems-architecture perspective."
+    },
+    {
+      "role_id": "RR-LEAD",
+      "label": "Research Lead / Source Sheriff (R3)",
+      "is_moderator": false,
+      "behavioral_directive": "Ensure domain assignments and interface candidates are grounded in the decision inventory."
+    }
+  ],
+  "inputs": [
+    {
+      "path": "02_DECISIONS/DECISION_INVENTORY.md",
+      "status": "RATIFIED",
+      "content": "# DECISION INVENTORY\n| DECISION_ID | QUESTION | STATUS |\n| D-01 | ... | RATIFIED |"
+    },
+    {
+      "path": "00_META/TEMPLATES/DOMAIN_MAP.template.md",
+      "status": null,
+      "content": "# DOMAIN MAP\n## Domains\n- ..."
+    },
+    {
+      "path": "00_META/TEMPLATES/DECISION_ROADMAP.template.md",
+      "status": null,
+      "content": "# DECISION ROADMAP\n## Gates\n- ..."
+    },
+    {
+      "path": "00_META/TEMPLATES/RETURN_HEADER.template.md",
+      "status": null,
+      "content": "> Paste this header at the TOP of every breakout return file."
+    },
+    {
+      "path": "00_META/PROCESS.md",
+      "status": null,
+      "content": "### section 0.2 Return header block (required on all breakout returns)"
+    }
+  ],
+  "agenda": [
+    {
+      "question_id": "Q-01",
+      "text": "What are the primary domains and which decision IDs belong to each?"
+    },
+    {
+      "question_id": "Q-02",
+      "text": "For each domain: responsibilities, boundaries, interface candidates, and risks."
+    },
+    {
+      "question_id": "Q-03",
+      "text": "What are the interface candidates across domains?"
+    },
+    {
+      "question_id": "Q-04",
+      "text": "What are the Decision Roadmap gates and which decisions close in each gate?"
+    }
+  ],
+  "output_contract": {
+    "return_type": "DOMAIN_MAPPING",
+    "required_sections": [
+      "PRIMARY_DOMAINS_COUNT",
+      "DOMAIN_DECISIONS_MAPPING",
+      "INTERFACE_CANDIDATES",
+      "DECISION_ROADMAP"
+    ],
+    "minimum_counts": {
+      "INTERFACE_CANDIDATES": 3,
+      "DECISION_ROADMAP_GATES": 2
+    },
+    "return_header_fields": [
+      "MEETING_ID",
+      "RETURN_TYPE",
+      "RECOMMENDED_STATUS",
+      "CONFLICTS_WITH",
+      "PROPOSES_BOUNDARY_CHANGE",
+      "R3_EVIDENCE_REQUIRED",
+      "EVIDENCE_PACK",
+      "OPEN_QUESTIONS",
+      "SYNTHESIS_PLANNED"
+    ],
+    "save_path": "04_BREAKOUTS/RETURNS/2026-02-20_BP-2026-02-20-005_domain-mapping.md"
+  },
+  "stop_condition": "All decisions assigned to exactly one domain (or flagged cross-cutting with owner), >=3 interface candidates recorded, and >=2 roadmap gates defined.",
+  "evidence_required": true,
+  "evidence_instructions": "Provide source requirements, not sources.",
+  "callback": {
+    "method": "filesystem",
+    "path": "04_BREAKOUTS/RETURNS/2026-02-20_BP-2026-02-20-005_domain-mapping.json"
+  }
+}
