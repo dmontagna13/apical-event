@@ -248,23 +248,39 @@ TASK-01 creates the foundational fixtures. Later tasks extend them. All fixtures
 
 **`tests/fixtures/valid_roll_call.json`** — A complete RollCall matching the roles in the valid packet. Uses providers from the default config.
 
-**`tests/conftest.py`** must provide these pytest fixtures:
+**`tests/conftest.py` evolves across tasks.** TASK-01 creates it with the fixtures that are possible without importing later modules. Later tasks add fixtures that depend on their own modules. The pattern:
 
+TASK-01 creates:
 ```python
 @pytest.fixture
-def valid_packet() -> SessionPacket: ...
+def valid_packet() -> SessionPacket: ...  # Loads from fixtures/valid_packet.json
 
 @pytest.fixture
-def valid_roll_call() -> RollCall: ...
+def valid_roll_call() -> RollCall: ...  # Loads from fixtures/valid_roll_call.json
 
 @pytest.fixture
-def tmp_data_root(tmp_path) -> Path: ...  # Creates a temp data root with default config
-
-@pytest.fixture
-def tmp_session_dir(tmp_data_root, valid_packet) -> Path: ...  # Creates a session dir with packet saved
+def tmp_data_root(tmp_path) -> Path:
+    """Creates a temp data root with config/ dir."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    return tmp_path
 ```
 
-Later tasks add their own fixtures to `conftest.py` (e.g., TASK-04 adds `mock_provider`, TASK-08 adds `ws_client`).
+TASK-05 adds (when `core/journals` exists):
+```python
+@pytest.fixture
+def tmp_session_dir(tmp_data_root, valid_packet) -> Path:
+    """Creates a full session dir using create_session_dir()."""
+    ...
+```
+
+TASK-04 adds:
+```python
+@pytest.fixture
+def mock_provider() -> ProviderAdapter: ...
+```
+
+Each task that extends `conftest.py` must only import from modules that exist at that point in the build order. Do NOT add imports for modules that haven't been built yet.
 
 ### 0.6 Integration seam tests
 
@@ -341,6 +357,58 @@ PHASE 5 — Frontend
   └── TASK-15  frontend/workbench
 ```
 
+### Phase verification
+
+After completing all tasks in a phase and before tagging, run the phase smoke test to verify the phase hangs together.
+
+**Phase 1 smoke test:**
+```bash
+source .venv/bin/activate
+python -c "from core.schemas import SessionPacket, RollCall, AgentTurn, KanbanBoard; print('schemas OK')"
+python -c "from core.config import load_providers, is_first_run; print('config OK')"
+pytest tests/ -m "not integration" -x --tb=short
+ruff check src/ tests/
+black --check src/ tests/
+docker build . -t apical-event:phase1
+```
+All commands must succeed. The Docker build will produce an image without frontend or API routes — that's expected.
+
+**Phase 2 smoke test:**
+```bash
+pytest tests/ -m "not integration" -x --tb=short  # full suite, not just new tests
+python -c "
+from core.providers import get_adapter
+from core.journals import init_journal, append_turn, read_journal
+from core.prompt_assembly import assemble_agent_prompt
+print('all phase 2 modules importable')
+"
+```
+
+**Phase 3 smoke test:**
+```bash
+pytest tests/ -m "not integration" -x --tb=short
+# Start the server and hit health endpoint:
+timeout 10 bash -c '
+  uvicorn src.api.app:create_app --factory --port 8420 &
+  PID=$!
+  sleep 3
+  curl -sf http://localhost:8420/api/health && echo "health OK" || echo "health FAILED"
+  kill $PID
+'
+```
+
+**Phase 4 smoke test:**
+```bash
+pytest tests/ -m "not integration" -x --tb=short  # includes seam tests
+```
+
+**Phase 5 smoke test:**
+```bash
+cd frontend && npm run build && npm run lint && cd ..
+docker build . -t apical-event:latest  # now includes frontend
+pytest tests/ -m "not integration" -x --tb=short
+```
+
 ---
 
 ## TASK-01: core/schemas
@@ -372,18 +440,38 @@ Implement all Pydantic models, validation logic, shared constants, and foundatio
 
 **Project configuration files:**
 
-- `pyproject.toml` — Project metadata, Python ≥3.12, dependencies per §0.3, ruff/black config (line-length=100, ruff select=["E","F","I","W"]).
-- `requirements.txt` — Pinned production dependencies.
-- `requirements-dev.txt` — Pinned dev dependencies (includes everything in requirements.txt plus test/lint tools).
+- `pyproject.toml` — Project metadata, Python ≥3.12, dependencies per §0.3, ruff/black config (line-length=100, ruff select=["E","F","I","W"]). Must include:
+  - `[build-system]` with setuptools.
+  - `[project]` with name `apical-event`, dependencies listing all allowed packages from §0.3.
+  - `[tool.setuptools.packages.find]` with `where = ["src"]` so that `pip install -e .` makes `core`, `api`, and `orchestration` importable.
+  - `[tool.pytest.ini_options]` with `pythonpath = ["src"]` so pytest can import from `src/` without an editable install (belt and suspenders — both the pyproject config and `pip install -e .` ensure imports work).
+  - `[tool.ruff]` and `[tool.black]` config.
+- `requirements.txt` — Pinned production dependencies. To generate: install the project into the venv (`pip install -e .`), then `pip freeze --exclude-editable > requirements.txt`. This produces exact `==` pins from whatever versions pip resolved. Do NOT write versions by hand or use `>=` ranges.
+- `requirements-dev.txt` — Start with `-r requirements.txt` (includes all production deps), then add pinned dev dependencies. To generate: install dev packages (`pip install pytest pytest-asyncio ruff black pip-tools`), then manually append those lines to the file with their installed versions. Format: `-r requirements.txt` on line 1, then one `package==version` per line for dev-only packages.
 
 **Test files and fixtures:**
 
 - `tests/__init__.py` — Empty.
-- `tests/conftest.py` — Shared fixtures per §0.5.
+- `tests/conftest.py` — Shared fixtures per §0.5. For TASK-01, this includes `valid_packet`, `valid_roll_call`, and `tmp_data_root` only. Do NOT add `tmp_session_dir` — that depends on `core/journals` which doesn't exist yet.
 - `tests/fixtures/valid_packet.json` — Complete valid packet per §0.5.
 - `tests/fixtures/valid_roll_call.json` — Complete valid roll call per §0.5.
 - `tests/core/__init__.py` — Empty.
 - `tests/core/test_schemas.py` — Unit tests.
+
+**Also create these empty `__init__.py` files** so the package structure is importable from the start:
+- `src/__init__.py`
+- `src/api/__init__.py` (empty placeholder)
+- `src/orchestration/__init__.py` (empty placeholder)
+
+### TASK-01 bootstrap sequence
+
+TASK-01 is unique because it creates the project configuration that all other tasks depend on. The work order within this task is:
+
+1. Create `pyproject.toml` first.
+2. Create `requirements.txt` and `requirements-dev.txt` (using the pip freeze method described above).
+3. Set up the venv: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt && pip install -e .`
+4. Now implement all source files, test fixtures, and tests.
+5. Run tests and linter.
 
 ### Acceptance criteria
 
@@ -395,6 +483,9 @@ Implement all Pydantic models, validation logic, shared constants, and foundatio
 - [ ] All enum values match spec exactly (no extra values, no missing values).
 - [ ] Constants file contains all values listed in §0.4 with correct types.
 - [ ] `pyproject.toml` declares all allowed dependencies and no others.
+- [ ] `pyproject.toml` has `[tool.setuptools.packages.find]` with `where = ["src"]`.
+- [ ] `pyproject.toml` has `[tool.pytest.ini_options]` with `pythonpath = ["src"]`.
+- [ ] `from core.schemas import SessionPacket` works in the activated venv (importability check).
 - [ ] `ruff check src/` and `black --check src/` pass.
 - [ ] `pytest tests/core/test_schemas.py` passes.
 
@@ -467,24 +558,26 @@ Create Docker configuration, `.gitignore`, CI pipeline, and development scripts.
 
 ### Deliverables
 
-- `Dockerfile` — Multi-stage build per §0.8. Stage 1 (`builder-frontend`): Node.js 20, `npm ci`, `npm run build`. Stage 2 (`builder-backend`): Python 3.12, `pip install -r requirements.txt`. Stage 3 (`runtime`): Python 3.12-slim, copy installed packages from builder-backend, copy built frontend from builder-frontend into `/app/static/`, copy `src/` into `/app/src/`, copy `config/providers.default.yaml` into `/app/config/`. Non-root user. Expose 8420. CMD: `uvicorn src.api.app:create_app --factory --host 0.0.0.0 --port 8420`.
+- `Dockerfile` — Multi-stage build per §0.8. The frontend stage must be **conditional**: if `frontend/package.json` does not exist, skip the frontend build stage and produce an image without static files (the API will still work, it just won't serve the UI). This is necessary because the frontend isn't created until Phase 5 but the Dockerfile is created in Phase 1. Use a build arg or a conditional `COPY` with a fallback. Stage structure: Stage 1 (`builder-frontend`): Node.js 20, `npm ci`, `npm run build` — **skipped if `frontend/package.json` doesn't exist**. Stage 2 (`builder-backend`): Python 3.12, `pip install -r requirements.txt`. Stage 3 (`runtime`): Python 3.12-slim, copy installed packages from builder-backend, conditionally copy built frontend from builder-frontend into `/app/static/` if it exists, copy `src/` into `/app/src/`, copy `config/providers.default.yaml` into `/app/config/`. Non-root user. Expose 8420. CMD: `uvicorn src.api.app:create_app --factory --host 0.0.0.0 --port 8420`.
 - `docker-compose.yaml` — Per §12.1 and §0.8.
 - `.env.example` — Template with all env vars, all values empty or set to defaults. Comments explaining each var.
 - `.gitignore` — Per §0.2. Must be exact — copy the content from §0.2.
-- `scripts/dev.sh` — Starts backend with `uvicorn src.api.app:create_app --factory --reload --port 8420` and frontend with `cd frontend && npm run dev` in parallel. Uses `trap` to kill both on Ctrl-C.
-- `.github/workflows/ci.yaml` — GitHub Actions CI: checkout, setup Python 3.12, install requirements-dev.txt, run `ruff check src/ tests/`, run `black --check src/ tests/`, run `pytest tests/ -m "not integration"`, setup Node 20, `cd frontend && npm ci && npm run build && npx eslint src/ && npx prettier --check src/`.
-- `README.md` — Project overview (1 paragraph), prerequisites (Docker, or Python 3.12 + Node 20 for dev), quickstart (`docker-compose up`), dev setup (`pip install -r requirements-dev.txt && cd frontend && npm ci`), running tests (`pytest`), environment variables table.
+- `scripts/dev.sh` — Activates `.venv` if present (`source .venv/bin/activate` if `.venv/bin/activate` exists, otherwise print a warning and continue). Starts backend with `uvicorn src.api.app:create_app --factory --reload --port 8420`. If `frontend/package.json` exists, also starts `cd frontend && npm run dev` in parallel. Uses `trap` to kill all on Ctrl-C.
+- `.github/workflows/ci.yaml` — GitHub Actions CI: checkout, setup Python 3.12, install requirements-dev.txt and `pip install -e .`, run `ruff check src/ tests/`, run `black --check src/ tests/`, run `pytest tests/ -m "not integration"`. **Frontend steps are conditional**: only if `frontend/package.json` exists, setup Node 20, `cd frontend && npm ci && npm run build && npx eslint src/ && npx prettier --check src/`. Use a job-level `if` condition or a step-level check.
+- `README.md` — Project overview (1 paragraph), prerequisites (Docker, or Python 3.12 + Node 20 for dev), quickstart (`docker-compose up`), dev setup (`pip install -r requirements-dev.txt && pip install -e . && cd frontend && npm ci`), running tests (`pytest`), environment variables table.
 
 ### Acceptance criteria
 
-- [ ] `docker build .` succeeds with no errors.
+- [ ] `docker build .` succeeds **even when `frontend/` directory does not exist**. The image starts and serves the API.
+- [ ] When `frontend/` exists and has been built, `docker build .` includes the static files in the image.
 - [ ] Final Docker image does NOT contain: node_modules, .git, test files, dev dependencies, __pycache__.
 - [ ] Final Docker image runs as non-root user.
 - [ ] `docker-compose up` starts the container and port 8420 is accessible.
 - [ ] Data volume persists across `docker-compose down && docker-compose up`.
 - [ ] `.gitignore` matches §0.2 exactly.
-- [ ] CI pipeline runs lint + test + frontend build.
-- [ ] `scripts/dev.sh` starts both backend and frontend and cleans up on exit.
+- [ ] CI pipeline runs lint + test successfully in Phase 1 (no frontend yet).
+- [ ] CI pipeline runs frontend steps only when `frontend/package.json` exists.
+- [ ] `scripts/dev.sh` starts backend only when frontend doesn't exist, both when it does.
 
 ### Do NOT
 
@@ -790,10 +883,7 @@ Implement the Moderator's tool definitions and execution handlers.
 - Do not import from `core/providers` — tools are provider-agnostic.
 - Do not call LLM APIs from tool handlers.
 - Do not write to disk from tool handlers — state modification is in-memory. The engine persists state.
-
----
-
-## TASK-10: orchestration/engine
+- Do not change any Pydantic model field types or names without also updating `frontend/src/types/index.ts` (if it exists yet). Models are a shared contract.
 
 **Module:** `src/orchestration/engine/`
 **Spec sections:** §4.4 (deliberation loop), §4.6 (error handling)
@@ -850,6 +940,7 @@ Implement the LangGraph state machine that drives the deliberation loop.
 - Do not add a database — state is JSON files.
 - Do not catch and silence exceptions — all unexpected errors must propagate to ERROR state.
 - Do not implement streaming — providers return complete responses.
+- Do not change any Pydantic model field types or names without also updating `frontend/src/types/index.ts` (if it exists yet). Models are a shared contract.
 
 ---
 
@@ -894,6 +985,7 @@ Implement the tiered context assembly algorithm and bundle summarization.
 - Do not import a tokenizer library (tiktoken, sentencepiece) — use the char-based heuristic for v1.
 - Do not modify original bundle files — summaries are separate files.
 - Do not cache summaries in memory — always read from disk (ensures consistency across restarts).
+- Do not change any Pydantic model field types or names without also updating `frontend/src/types/index.ts` (if it exists yet). Models are a shared contract.
 
 ---
 
@@ -937,6 +1029,7 @@ Implement consensus capture, validation, and session archive export.
 - Do not compress or zip the archive — it's a JSON file.
 - Do not include raw API responses or conversation history in the archive — only the structured journal entries and bundle data.
 - Do not delete any session files after writing the archive.
+- Do not change any Pydantic model field types or names without also updating `frontend/src/types/index.ts` (if it exists yet). Models are a shared contract.
 
 ---
 
