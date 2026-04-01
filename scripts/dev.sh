@@ -16,7 +16,7 @@ else
   echo "Warning: .venv/bin/activate not found; continuing without venv."
 fi
 
-uvicorn src.api.app:create_app --factory --reload --port 8420 &
+uvicorn api.app:create_app --factory --reload --port 8420 &
 PIDS+=("$!")
 
 if [ -f frontend/package.json ]; then
