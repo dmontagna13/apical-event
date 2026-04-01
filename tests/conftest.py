@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from core.journals import create_session_dir, save_packet
 from core.providers import CompletionResult, Message, ProviderAdapter, ToolCall, ToolDefinition
 from core.schemas import RollCall, SessionPacket
 
@@ -62,3 +63,14 @@ def mock_provider() -> ProviderAdapter:
             return True
 
     return _MockProvider()
+
+
+@pytest.fixture
+def tmp_session_dir(tmp_data_root: Path, valid_packet: SessionPacket) -> Path:
+    """Create a full session dir using create_session_dir()."""
+
+    session_dir = create_session_dir(
+        tmp_data_root, valid_packet.project_name, session_id="sess_test"
+    )
+    save_packet(session_dir, valid_packet)
+    return session_dir
