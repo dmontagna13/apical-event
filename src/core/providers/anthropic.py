@@ -67,7 +67,7 @@ class AnthropicAdapter:
         async with httpx.AsyncClient(
             timeout=AGENT_TIMEOUT_SECONDS, transport=self.transport
         ) as client:
-            response = await self._post_with_retry(client, url, headers, payload)
+            response = await self._post_with_retry(client, url, headers, payload, model=model)
         latency_ms = int((time.monotonic() - start) * 1000)
 
         data = response.json()
@@ -110,10 +110,15 @@ class AnthropicAdapter:
             async with httpx.AsyncClient(
                 timeout=AGENT_TIMEOUT_SECONDS, transport=self.transport
             ) as client:
-                await self._post_with_retry(client, url, headers, payload)
+                await self._post_with_retry(client, url, headers, payload, model=self.default_model)
         except ProviderError:
             return False
         return True
+
+    async def list_models(self) -> list[str] | None:
+        """Anthropic does not provide a compatible /models endpoint."""
+
+        return None
 
     async def _post_with_retry(
         self,
@@ -121,11 +126,12 @@ class AnthropicAdapter:
         url: str,
         headers: dict[str, str],
         payload: dict[str, Any],
+        model: str | None = None,
     ) -> httpx.Response:
         try:
             response = await client.post(url, headers=headers, json=payload)
         except httpx.TimeoutException as exc:
-            raise ProviderError(self.provider_name, None, str(exc)) from exc
+            raise ProviderError(self.provider_name, None, str(exc), model=model) from exc
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
@@ -134,9 +140,9 @@ class AnthropicAdapter:
             try:
                 response = await client.post(url, headers=headers, json=payload)
             except httpx.TimeoutException as exc:
-                raise ProviderError(self.provider_name, None, str(exc)) from exc
+                raise ProviderError(self.provider_name, None, str(exc), model=model) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.provider_name, response.status_code, response.text)
+            raise ProviderError(self.provider_name, response.status_code, response.text, model=model)
 
         return response

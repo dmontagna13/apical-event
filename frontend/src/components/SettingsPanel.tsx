@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiFetch } from "../api/client";
 import { useToast } from "./Toast";
-import type { ProviderConfigResponse, ProvidersResponse } from "../types/api";
+import type {
+  ProviderConfigResponse,
+  ProviderModelsResponse,
+  ProvidersResponse,
+} from "../types/api";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -26,6 +30,42 @@ export function SettingsPanel({
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<Record<string, string>>({});
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    if (open) {
+      onUpdated();
+    }
+  }, [onUpdated, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let cancelled = false;
+    const entries = Object.entries(providers) as [string, ProviderConfigResponse][];
+    Promise.all(
+      entries.map(async ([key, provider]) => {
+        const fallback = provider.available_models ?? [];
+        try {
+          const response = await apiFetch<ProviderModelsResponse>(
+            `/api/config/providers/${key}/models`
+          );
+          const models = response.models.length ? response.models : fallback;
+          if (!cancelled) {
+            setModelsByProvider((prev) => ({ ...prev, [key]: models }));
+          }
+        } catch {
+          if (!cancelled) {
+            setModelsByProvider((prev) => ({ ...prev, [key]: fallback }));
+          }
+        }
+      })
+    ).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, providers]);
 
   const updateDraft = (key: string, next: Partial<DraftState>) => {
     setDrafts((prev) => ({
@@ -117,6 +157,7 @@ export function SettingsPanel({
             ([key, provider]) => {
               const status = testing[key];
               const draft = drafts[key];
+              const models = modelsByProvider[key] ?? provider.available_models ?? [];
               return (
                 <div key={key} className="rounded-2xl border border-slate-100 bg-white p-4">
                   <div className="flex items-center justify-between">
@@ -138,9 +179,9 @@ export function SettingsPanel({
                         type="password"
                         placeholder={provider.has_api_key ? "Key is set" : "Paste API key"}
                         value={draft?.apiKey ?? ""}
-                      onChange={(event: { target: { value: string } }) =>
-                        updateDraft(key, { apiKey: event.target.value })
-                      }
+                        onChange={(event: { target: { value: string } }) =>
+                          updateDraft(key, { apiKey: event.target.value })
+                        }
                         className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                       />
                     </label>
@@ -151,9 +192,9 @@ export function SettingsPanel({
                           type="text"
                           placeholder="https://api.example.com"
                           value={draft?.baseUrl ?? ""}
-                        onChange={(event: { target: { value: string } }) =>
-                          updateDraft(key, { baseUrl: event.target.value })
-                        }
+                          onChange={(event: { target: { value: string } }) =>
+                            updateDraft(key, { baseUrl: event.target.value })
+                          }
                           className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                         />
                       </label>
@@ -178,6 +219,24 @@ export function SettingsPanel({
                       <span className="text-xs font-semibold text-red-600">{status}</span>
                     )}
                   </div>
+
+                  {models.length > 0 && (
+                    <div className="mt-3 text-xs text-slate-500">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                        Models
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {models.map((model) => (
+                          <span
+                            key={model}
+                            className="rounded-full border border-slate-200 px-2 py-1 text-[11px]"
+                          >
+                            {model}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             }

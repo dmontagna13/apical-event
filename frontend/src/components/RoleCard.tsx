@@ -15,7 +15,7 @@ interface RoleCardProps {
   role: Role;
   assignment: AssignmentState;
   providerOptions: [string, ProviderConfigResponse][];
-  providers: Record<string, ProviderConfigResponse>;
+  models: string[];
   expanded: boolean;
   connectivity?: ConnectivityState;
   showModeratorWarning: boolean;
@@ -28,7 +28,7 @@ export function RoleCard({
   role,
   assignment,
   providerOptions,
-  providers,
+  models,
   expanded,
   connectivity,
   showModeratorWarning,
@@ -38,8 +38,6 @@ export function RoleCard({
 }: RoleCardProps): JSX.Element {
   const directive = role.behavioral_directive;
   const truncated = directive.length > 200 ? `${directive.slice(0, 200)}…` : directive;
-  const provider = providers[assignment.provider];
-  const models = provider?.available_models ?? [];
 
   return (
     <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-card backdrop-blur">

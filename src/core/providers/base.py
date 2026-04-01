@@ -45,12 +45,20 @@ class CompletionResult:
 class ProviderError(RuntimeError):
     """Error wrapper for provider failures."""
 
-    def __init__(self, provider: str, status_code: int | None, response_body: str | None) -> None:
+    def __init__(
+        self,
+        provider: str,
+        status_code: int | None,
+        response_body: str | None,
+        model: str | None = None,
+    ) -> None:
         truncated = response_body[:500] if response_body else None
-        super().__init__(f"Provider {provider} error: {status_code}")
+        model_note = f", model={model}" if model else ""
+        super().__init__(f"Provider {provider} error: {status_code}{model_note}")
         self.provider = provider
         self.status_code = status_code
         self.response_body = truncated
+        self.model = model
 
 
 class ProviderAdapter(Protocol):
@@ -67,3 +75,6 @@ class ProviderAdapter(Protocol):
 
     async def health_check(self) -> bool:
         """Return True if provider responds to a minimal request."""
+
+    async def list_models(self) -> list[str] | None:
+        """Return available model IDs, or None if not supported."""

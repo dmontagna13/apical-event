@@ -12,7 +12,7 @@ from api.websocket.manager import ConnectionManager
 from core.config import ProviderConfig, resolve_api_key
 from core.journals import append_turn, next_bundle_id, read_journal
 from core.prompt_assembly.agent_prompt import assemble_agent_prompt
-from core.providers.base import Message
+from core.providers.base import Message, ProviderError
 from core.providers.factory import get_adapter
 from core.schemas import AgentTurn, RollCall, SessionPacket
 from core.schemas.constants import AGENT_TIMEOUT_SECONDS
@@ -148,6 +148,19 @@ async def _dispatch_one(
         error_message = f"Agent timed out after {AGENT_TIMEOUT_SECONDS}s"
         metadata = {"latency_ms": latency_ms}
         logger.warning("Agent %s timed out for session %s", role_id, session_id)
+
+    except ProviderError as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        status = "ERROR"
+        error_message = str(exc)
+        metadata = {"latency_ms": latency_ms}
+        logger.error(
+            "Provider %s error for session %s (model %s): %s",
+            exc.provider,
+            session_id,
+            exc.model,
+            exc.response_body or exc,
+        )
 
     except Exception as exc:  # noqa: BLE001
         latency_ms = int((time.monotonic() - start) * 1000)

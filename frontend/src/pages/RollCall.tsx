@@ -15,6 +15,7 @@ export function RollCall(): JSX.Element {
     roles,
     providers,
     providerOptions,
+    modelsByProvider,
     assignments,
     expandedRoles,
     connectivity,
@@ -83,7 +84,11 @@ export function RollCall(): JSX.Element {
             role={role}
             assignment={assignments[role.role_id] ?? { provider: "", model: "" }}
             providerOptions={providerOptions}
-            providers={providers}
+            models={
+              modelsByProvider[assignments[role.role_id]?.provider ?? ""] ??
+              providers[assignments[role.role_id]?.provider ?? ""]?.available_models ??
+              []
+            }
             expanded={Boolean(expandedRoles[role.role_id])}
             connectivity={connectivity[assignments[role.role_id]?.provider ?? ""]}
             showModeratorWarning={role.is_moderator && Boolean(moderatorWarning)}

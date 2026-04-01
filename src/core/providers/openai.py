@@ -24,11 +24,14 @@ class OpenAIAdapter:
         base_url: str,
         api_key: str,
         default_model: str | None = None,
+        provider_name: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.default_model = default_model
+        if provider_name:
+            self.provider_name = provider_name
         self.transport = transport
 
     async def complete(
@@ -71,7 +74,7 @@ class OpenAIAdapter:
         async with httpx.AsyncClient(
             timeout=AGENT_TIMEOUT_SECONDS, transport=self.transport
         ) as client:
-            response = await self._post_with_retry(client, url, headers, payload)
+            response = await self._post_with_retry(client, url, headers, payload, model=model)
         latency_ms = int((time.monotonic() - start) * 1000)
 
         data = response.json()
@@ -117,10 +120,33 @@ class OpenAIAdapter:
             async with httpx.AsyncClient(
                 timeout=AGENT_TIMEOUT_SECONDS, transport=self.transport
             ) as client:
-                await self._post_with_retry(client, url, headers, payload)
+                await self._post_with_retry(client, url, headers, payload, model=self.default_model)
         except ProviderError:
             return False
         return True
+
+    async def list_models(self) -> list[str] | None:
+        """Return model IDs from the OpenAI-compatible /models endpoint."""
+
+        url = f"{self.base_url}/models"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        async with httpx.AsyncClient(timeout=AGENT_TIMEOUT_SECONDS, transport=self.transport) as client:
+            try:
+                response = await client.get(url, headers=headers)
+            except httpx.TimeoutException as exc:
+                raise ProviderError(self.provider_name, None, str(exc)) from exc
+
+        if response.status_code >= 400:
+            raise ProviderError(self.provider_name, response.status_code, response.text)
+
+        data = response.json()
+        items = data.get("data", [])
+        models = [
+            item.get("id")
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ]
+        return models
 
     async def _post_with_retry(
         self,
@@ -128,11 +154,12 @@ class OpenAIAdapter:
         url: str,
         headers: dict[str, str],
         payload: dict[str, Any],
+        model: str | None = None,
     ) -> httpx.Response:
         try:
             response = await client.post(url, headers=headers, json=payload)
         except httpx.TimeoutException as exc:
-            raise ProviderError(self.provider_name, None, str(exc)) from exc
+            raise ProviderError(self.provider_name, None, str(exc), model=model) from exc
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
@@ -141,9 +168,9 @@ class OpenAIAdapter:
             try:
                 response = await client.post(url, headers=headers, json=payload)
             except httpx.TimeoutException as exc:
-                raise ProviderError(self.provider_name, None, str(exc)) from exc
+                raise ProviderError(self.provider_name, None, str(exc), model=model) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.provider_name, response.status_code, response.text)
+            raise ProviderError(self.provider_name, response.status_code, response.text, model=model)
 
         return response

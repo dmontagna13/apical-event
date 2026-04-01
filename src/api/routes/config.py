@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -22,6 +23,7 @@ from core.schemas import RoleAssignment, RollCall
 from core.schemas.enums import ErrorCode
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class PresetPayload(BaseModel):
@@ -56,6 +58,34 @@ def update_provider(
     providers[provider_key] = config
     save_providers(data_root, providers)
     return {"ok": True}
+
+
+@router.get("/api/config/providers/{provider_key}/models")
+async def list_provider_models(
+    provider_key: str,
+    data_root: Path = Depends(get_data_root),
+) -> dict:
+    """List available models for a provider."""
+
+    providers = load_providers(data_root)
+    config = providers.get(provider_key)
+    if not config:
+        raise ApiError(404, ErrorCode.NOT_FOUND, "Provider not found")
+
+    api_key = resolve_api_key(config)
+    if not api_key:
+        return {"models": config.available_models}
+
+    adapter = get_adapter(provider_key, config.model_copy(update={"api_key": api_key}))
+    try:
+        models = await adapter.list_models()
+    except ProviderError as exc:
+        logger.warning("Model listing failed for %s: %s", provider_key, exc)
+        models = None
+
+    if models:
+        return {"models": models}
+    return {"models": config.available_models}
 
 
 @router.post("/api/config/providers/{provider_key}/test")

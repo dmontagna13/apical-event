@@ -24,6 +24,7 @@ def get_adapter(provider_key: str, provider_config: ProviderConfig):
             base_url=provider_config.base_url or "",
             api_key=provider_config.api_key or "",
             default_model=provider_config.default_model,
+            provider_name="nscale",
         )
     if provider_key == "gemini":
         return GeminiAdapter(

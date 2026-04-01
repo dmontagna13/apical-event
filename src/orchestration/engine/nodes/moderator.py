@@ -49,6 +49,13 @@ async def run_moderator_turn(
     provider_cfg = providers_config[moderator_assignment.provider]
     adapter = _make_adapter(moderator_assignment.provider, provider_cfg)
     model = moderator_assignment.model
+    base_url = getattr(adapter, "base_url", "")
+    logger.info(
+        "Moderator call: provider=%s, model=%s, base_url=%s",
+        moderator_assignment.provider,
+        model,
+        base_url,
+    )
 
     # Enrich state with role context for tool validation
     state.setdefault("moderator_role_id", moderator_role.role_id)
@@ -231,7 +238,15 @@ async def _call_once(
         full_messages = [system_msg] + list(messages)
         return await adapter.complete(full_messages, model, tools=tools)
     except ProviderError as exc:
-        logger.warning("ProviderError: %s", exc)
+        if exc.status_code == 400:
+            logger.error(
+                "Provider %s returned 400 for model %s: %s",
+                exc.provider,
+                exc.model,
+                exc.response_body,
+            )
+        else:
+            logger.warning("ProviderError: %s", exc)
         return None
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error calling provider: %s", exc)

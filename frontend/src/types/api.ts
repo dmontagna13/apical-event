@@ -33,6 +33,10 @@ export interface ProviderTestResponse {
   error?: string;
 }
 
+export interface ProviderModelsResponse {
+  models: string[];
+}
+
 export interface SessionSummary {
   session_id: string;
   project_name: string;

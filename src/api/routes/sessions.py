@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Response
 
-from api.dependencies import get_data_root, get_providers
+from api.dependencies import get_data_root, get_providers, get_public_base_url
 from core.config import ProviderConfig, resolve_api_key, save_last_roll_call
 from core.journals import (
     create_session_dir,
@@ -19,7 +19,7 @@ from core.journals import (
     save_state,
 )
 from core.schemas import KanbanBoard, RollCall, SessionPacket, validate_packet
-from core.schemas.constants import DEFAULT_PORT, SESSION_ID_HEX_LENGTH, SESSION_ID_PREFIX
+from core.schemas.constants import SESSION_ID_HEX_LENGTH, SESSION_ID_PREFIX
 from core.schemas.enums import ErrorCode, SessionState, SessionSubstate
 
 router = APIRouter()
@@ -85,7 +85,8 @@ def init_session(
     if existing:
         if response is not None:
             response.status_code = 200
-        url = f"http://localhost:{DEFAULT_PORT}/session/{existing}"
+        base_url = get_public_base_url()
+        url = f"{base_url}/session/{existing}"
         return {"session_id": existing, "url": url, "state": SessionState.ROLL_CALL.value}
 
     session_id = _generate_session_id()
@@ -110,7 +111,8 @@ def init_session(
     }
     save_state(session_dir, state)
 
-    url = f"http://localhost:{DEFAULT_PORT}/session/{session_id}"
+    base_url = get_public_base_url()
+    url = f"{base_url}/session/{session_id}"
     return {"session_id": session_id, "url": url, "state": SessionState.ROLL_CALL.value}
 
 

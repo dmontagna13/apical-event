@@ -6,6 +6,7 @@ import type {
   Preset,
   PresetsResponse,
   ProviderConfigResponse,
+  ProviderModelsResponse,
   ProvidersResponse,
   ProviderTestResponse,
   RollCallResponse,
@@ -27,6 +28,7 @@ interface UseRollCallResult {
   roles: Role[];
   providers: ProvidersResponse["providers"];
   providerOptions: [string, ProviderConfigResponse][];
+  modelsByProvider: Record<string, string[]>;
   assignments: Record<string, AssignmentState>;
   expandedRoles: Record<string, boolean>;
   connectivity: Record<string, ConnectivityState>;
@@ -49,6 +51,7 @@ export function useRollCall(sessionId: string): UseRollCallResult {
   const [packet, setPacket] = useState<SessionPacket | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [providers, setProviders] = useState<ProvidersResponse["providers"]>({});
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
   const [assignments, setAssignments] = useState<Record<string, AssignmentState>>({});
   const [expandedRoles, setExpandedRoles] = useState<Record<string, boolean>>({});
   const [connectivity, setConnectivity] = useState<Record<string, ConnectivityState>>({});
@@ -61,6 +64,44 @@ export function useRollCall(sessionId: string): UseRollCallResult {
     const entries = Object.entries(providers) as [string, ProviderConfigResponse][];
     return entries.filter(([, provider]) => provider.has_api_key);
   }, [providers]);
+
+  const selectDefaultModel = useCallback(
+    (providerKey: string, models: string[]) => {
+      const provider = providers[providerKey];
+      const preferred = provider?.default_model;
+      if (preferred && models.includes(preferred)) {
+        return preferred;
+      }
+      if (models.length > 0) {
+        return models[0] ?? "";
+      }
+      return preferred ?? "";
+    },
+    [providers]
+  );
+
+  const fetchModels = useCallback(
+    async (providerKey: string) => {
+      if (!providerKey) {
+        return [];
+      }
+      const fallback = providers[providerKey]?.available_models ?? [];
+      try {
+        const response = await apiFetch<ProviderModelsResponse>(
+          `/api/config/providers/${providerKey}/models`
+        );
+        if (response.models && response.models.length > 0) {
+          setModelsByProvider((prev) => ({ ...prev, [providerKey]: response.models }));
+          return response.models;
+        }
+      } catch {
+        // fall back to static list
+      }
+      setModelsByProvider((prev) => ({ ...prev, [providerKey]: fallback }));
+      return fallback;
+    },
+    [providers]
+  );
 
   const moderatorWarning = useMemo(() => {
     const moderator = roles.find((role) => role.is_moderator);
@@ -97,11 +138,31 @@ export function useRollCall(sessionId: string): UseRollCallResult {
 
   const setProvider = (roleId: string, providerKey: string) => {
     const provider = providers[providerKey];
-    const fallbackModel = provider?.default_model ?? provider?.available_models[0] ?? "";
+    const fallbackModels = modelsByProvider[providerKey] ?? provider?.available_models ?? [];
+    const fallbackModel = selectDefaultModel(providerKey, fallbackModels);
     setAssignments((prev) => ({
       ...prev,
       [roleId]: { provider: providerKey, model: fallbackModel },
     }));
+
+    void fetchModels(providerKey).then((discovered) => {
+      if (!discovered.length) {
+        return;
+      }
+      const preferredModel = selectDefaultModel(providerKey, discovered);
+      setAssignments((prev) => {
+        const next = { ...prev };
+        Object.entries(next).forEach(([key, assignment]) => {
+          if (assignment.provider !== providerKey) {
+            return;
+          }
+          if (!assignment.model || !discovered.includes(assignment.model)) {
+            next[key] = { ...assignment, model: preferredModel };
+          }
+        });
+        return next;
+      });
+    });
   };
 
   const setModel = (roleId: string, model: string) => {
@@ -110,6 +171,20 @@ export function useRollCall(sessionId: string): UseRollCallResult {
       [roleId]: { provider: prev[roleId]?.provider ?? "", model },
     }));
   };
+
+  useEffect(() => {
+    setModelsByProvider((prev) => {
+      const next = { ...prev };
+      (Object.entries(providers) as [string, ProviderConfigResponse][]).forEach(
+        ([key, provider]) => {
+          if (!next[key] || next[key].length === 0) {
+            next[key] = provider.available_models ?? [];
+          }
+        }
+      );
+      return next;
+    });
+  }, [providers]);
 
   const loadPreset = (preset: Preset) => {
     setAssignments((prev) => {
@@ -288,6 +363,7 @@ export function useRollCall(sessionId: string): UseRollCallResult {
     roles,
     providers,
     providerOptions,
+    modelsByProvider,
     assignments,
     expandedRoles,
     connectivity,
