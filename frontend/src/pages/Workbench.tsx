@@ -347,13 +347,13 @@ export function Workbench(): JSX.Element {
     };
 
     const handleDecisionQuiz = (data: { quiz: DecisionQuiz }) => {
-      const next = [...quizzesRef.current, data.quiz];
+      const next = [...(quizzesRef.current ?? []), data.quiz];
       const unique = new Map(next.map((item) => [item.quiz_id, item]));
       syncQuizzes(Array.from(unique.values()));
     };
 
     const handleActionCards = (data: { cards: ActionCard[] }) => {
-      const next = [...actionCardsRef.current, ...data.cards];
+      const next = [...(actionCardsRef.current ?? []), ...data.cards];
       const unique = new Map(next.map((item) => [item.card_id, item]));
       syncCards(Array.from(unique.values()));
     };
