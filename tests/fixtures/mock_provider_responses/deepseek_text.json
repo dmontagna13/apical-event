@@ -1,0 +1,9 @@
+{
+  "choices": [
+    {
+      "message": {"content": "Hello from DeepSeek"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 5, "completion_tokens": 7}
+}

@@ -1,0 +1,5 @@
+{
+  "content": [{"type": "text", "text": "Hello from Anthropic"}],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 5, "output_tokens": 7}
+}

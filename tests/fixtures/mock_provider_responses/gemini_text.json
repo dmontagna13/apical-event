@@ -1,0 +1,9 @@
+{
+  "candidates": [
+    {
+      "content": {"parts": [{"text": "Hello from Gemini"}]},
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 7}
+}

@@ -1,0 +1,11 @@
+{
+  "content": [
+    {
+      "type": "tool_use",
+      "name": "update_kanban",
+      "input": {"question_id": "Q-01"}
+    }
+  ],
+  "stop_reason": "tool_use",
+  "usage": {"input_tokens": 5, "output_tokens": 7}
+}

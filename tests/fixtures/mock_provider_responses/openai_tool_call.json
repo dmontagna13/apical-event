@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "message": {
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "update_kanban",
+              "arguments": "{\"question_id\": \"Q-01\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {"prompt_tokens": 5, "completion_tokens": 7}
+}

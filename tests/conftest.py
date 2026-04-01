@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from core.providers import CompletionResult, Message, ProviderAdapter, ToolCall, ToolDefinition
 from core.schemas import RollCall, SessionPacket
 
 
@@ -35,3 +36,29 @@ def tmp_data_root(tmp_path: Path) -> Path:
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     return tmp_path
+
+
+@pytest.fixture
+def mock_provider() -> ProviderAdapter:
+    """Provide a simple mock provider adapter."""
+
+    class _MockProvider:
+        async def complete(
+            self,
+            messages: list[Message],
+            model: str,
+            tools: list[ToolDefinition] | None = None,
+            response_format: dict | None = None,
+        ) -> CompletionResult:
+            return CompletionResult(
+                text="mock",
+                tool_calls=[ToolCall(name="mock_tool", arguments={})] if tools else [],
+                usage={},
+                finish_reason="stop",
+                latency_ms=0,
+            )
+
+        async def health_check(self) -> bool:
+            return True
+
+    return _MockProvider()
