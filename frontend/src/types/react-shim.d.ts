@@ -1,5 +1,8 @@
 declare namespace JSX {
   interface Element {}
+  interface IntrinsicAttributes {
+    key?: string | number;
+  }
   interface IntrinsicElements {
     [elemName: string]: Record<string, unknown>;
   }

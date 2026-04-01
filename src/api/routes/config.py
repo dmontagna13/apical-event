@@ -5,14 +5,30 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from api.dependencies import get_data_root, get_providers
 from api.routes.sessions import ApiError
-from core.config import ProviderConfig, load_providers, resolve_api_key, save_providers
+from core.config import (
+    ProviderConfig,
+    load_presets,
+    load_providers,
+    resolve_api_key,
+    save_preset,
+    save_providers,
+)
 from core.providers import ProviderError, get_adapter
+from core.schemas import RoleAssignment, RollCall
 from core.schemas.enums import ErrorCode
 
 router = APIRouter()
+
+
+class PresetPayload(BaseModel):
+    """Payload for creating or updating a roll call preset."""
+
+    name: str
+    assignments: list[RoleAssignment]
 
 
 @router.get("/api/config/providers")
@@ -64,3 +80,23 @@ async def test_provider(
         return {"ok": False, "error": exc.response_body or "Provider error"}
 
     return {"ok": ok}
+
+
+@router.get("/api/config/presets")
+def list_presets(data_root: Path = Depends(get_data_root)) -> dict:
+    """List stored roll call presets."""
+
+    presets = load_presets(data_root)
+    return {"presets": [preset.model_dump(mode="json") for preset in presets]}
+
+
+@router.post("/api/config/presets")
+def save_preset_route(
+    payload: PresetPayload,
+    data_root: Path = Depends(get_data_root),
+) -> dict:
+    """Create or update a named roll call preset."""
+
+    roll_call = RollCall(assignments=payload.assignments)
+    save_preset(data_root, payload.name, roll_call)
+    return {"ok": True}

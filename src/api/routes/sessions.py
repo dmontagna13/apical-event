@@ -5,8 +5,6 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-import asyncio
-
 from fastapi import APIRouter, BackgroundTasks, Depends, Response
 
 from api.dependencies import get_data_root, get_providers
@@ -148,7 +146,10 @@ def get_session_state(session_id: str, data_root: Path = Depends(get_data_root))
     """Return the stored session state."""
 
     session_dir = _find_session_dir(data_root, session_id)
-    return _read_json(session_dir / "state.json")
+    state = _read_json(session_dir / "state.json")
+    packet = SessionPacket.model_validate_json((session_dir / "packet.json").read_text())
+    state["packet"] = packet.model_dump(mode="json", by_alias=True)
+    return state
 
 
 @router.get("/api/sessions/{session_id}/journals")

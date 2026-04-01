@@ -12,6 +12,7 @@ import { apiFetch } from "./api/client";
 import { useToast } from "./components/Toast";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
+import { RollCall } from "./pages/RollCall";
 import { SetupWizard } from "./pages/SetupWizard";
 import { SessionList } from "./pages/SessionList";
 import type { ProviderConfigResponse, ProvidersResponse, SessionMetadataResponse } from "./types/api";
@@ -83,14 +84,7 @@ function SessionRouter(): JSX.Element {
   }
 
   if (session.state === "ROLL_CALL") {
-    return (
-      <div className="p-10">
-        <h1 className="font-display text-2xl text-ink">Roll call</h1>
-        <p className="mt-3 text-sm text-slate-600">
-          Roll call is ready to configure in the next step.
-        </p>
-      </div>
-    );
+    return <RollCall />;
   }
 
   if (session.state === "ACTIVE" || session.state === "CONSENSUS") {

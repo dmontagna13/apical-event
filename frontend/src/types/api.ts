@@ -1,4 +1,11 @@
-import type { SessionState, SessionSubstate } from "./index";
+import type {
+  ActionCard,
+  DecisionQuiz,
+  KanbanBoard,
+  SessionPacket,
+  SessionState,
+  SessionSubstate,
+} from "./index";
 
 export interface ProviderConfig {
   display_name: string;
@@ -43,6 +50,19 @@ export interface SessionMetadataResponse {
   packet_id: string;
   state: SessionState;
   substate: SessionSubstate | null;
+}
+
+export interface SessionStateResponse {
+  session_id?: string;
+  project_name?: string;
+  packet_id?: string;
+  state?: SessionState;
+  substate?: SessionSubstate | null;
+  kanban?: KanbanBoard;
+  pending_action_cards?: ActionCard[];
+  pending_quizzes?: DecisionQuiz[];
+  chat_history?: { role: string; content: string }[];
+  packet?: SessionPacket;
 }
 
 export interface RollCallResponse {
