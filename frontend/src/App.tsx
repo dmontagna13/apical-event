@@ -32,6 +32,7 @@ function LoadingScreen({ message }: { message: string }): JSX.Element {
 function SessionRouter(): JSX.Element {
   const { id } = useParams();
   const { pushToast } = useToast();
+  const location = useLocation();
   const [session, setSession] = useState<SessionMetadataResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -61,7 +62,7 @@ function SessionRouter(): JSX.Element {
     return () => {
       mounted = false;
     };
-  }, [id, pushToast]);
+  }, [id, location.key, pushToast]);
 
   if (loading) {
     return <LoadingScreen message="Loading session..." />;

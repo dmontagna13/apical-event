@@ -203,6 +203,18 @@ export class SessionWebSocket {
   private listeners = new Map<keyof ServerEventMap, Set<(data: unknown) => void>>();
 
   connect(sessionId: string): void {
+    if (this.sessionId === sessionId && this.socket) {
+      const state = this.socket.readyState;
+      if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
+        this.shouldReconnect = true;
+        return;
+      }
+    }
+
+    if (this.sessionId && this.sessionId !== sessionId) {
+      this.disconnect();
+    }
+
     this.sessionId = sessionId;
     this.shouldReconnect = true;
     this.openSocket();
@@ -245,10 +257,17 @@ export class SessionWebSocket {
     if (!this.sessionId) {
       return;
     }
+    if (this.socket) {
+      const state = this.socket.readyState;
+      if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
+        return;
+      }
+    }
     const url = `${resolveWsBaseUrl()}/ws/session/${this.sessionId}`;
     this.socket = new WebSocket(url);
 
     this.socket.addEventListener("open", () => {
+      this.clearReconnectTimer();
       const restored = this.lostSinceLastConnect;
       this.lostSinceLastConnect = false;
       if (this.hasConnectedOnce && restored) {
@@ -272,6 +291,7 @@ export class SessionWebSocket {
     });
 
     this.socket.addEventListener("close", () => {
+      this.socket = null;
       if (!this.shouldReconnect) {
         return;
       }
