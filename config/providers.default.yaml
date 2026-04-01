@@ -52,6 +52,20 @@ providers:
     supports_structured_output: false
     max_context_tokens: 65536
 
+  nscale:
+    display_name: "nscale"
+    base_url: "https://inference.api.nscale.com/v1"
+    api_key_env: "NSCALE_API_KEY"
+    api_key: null
+    default_model: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+    available_models:
+      - "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+      - "meta-llama/Llama-3.3-70B-Instruct"
+      - "Qwen/Qwen2.5-Coder-32B-Instruct"
+    supports_function_calling: true
+    supports_structured_output: false
+    max_context_tokens: 131072
+
   custom:
     display_name: "Custom / OpenAI-Compatible"
     base_url: null

@@ -19,6 +19,12 @@ def get_adapter(provider_key: str, provider_config: ProviderConfig):
             api_key=provider_config.api_key or "",
             default_model=provider_config.default_model,
         )
+    if provider_key == "nscale":
+        return OpenAIAdapter(
+            base_url=provider_config.base_url or "",
+            api_key=provider_config.api_key or "",
+            default_model=provider_config.default_model,
+        )
     if provider_key == "gemini":
         return GeminiAdapter(
             base_url=provider_config.base_url or "",
