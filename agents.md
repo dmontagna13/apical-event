@@ -10,7 +10,7 @@ These documents are your source of truth. Read them before writing any code.
 
 | Document | Path | Purpose |
 |----------|------|---------|
-| Technical spec | `docs/apical_event_spec_v0.4.md` | Complete system specification. Sections referenced as §N. |
+| Technical spec | `docs/apical_event_spec_v0.5.md` | Complete system specification. Sections referenced as §N. |
 | Task cards | `docs/apical_event_task_cards_v2.md` | Per-module implementation instructions, acceptance criteria, and guardrails. |
 
 When the spec and task cards conflict, the task cards win (they are refinements of the spec). When neither document covers a decision, leave a `# DECISION: <explanation>` comment in the code and move on. Do not invent features, endpoints, models, or dependencies that are not in these documents.

@@ -1176,3 +1176,595 @@ All criteria from the original card, plus:
 **Error responses (API):** All error responses use a consistent JSON format: `{"error": {"code": "VALIDATION_ERROR", "message": "...", "details": [...]}}`. Error codes are defined as an enum in `schemas/enums.py`. FastAPI exception handlers translate Python exceptions to this format. Raw tracebacks are never returned to the client.
 
 **Frontend error handling:** API errors show a toast notification with the error message. WebSocket disconnects show a persistent banner "Connection lost — reconnecting..." that auto-dismisses on reconnection. Unhandled React errors are caught by an error boundary that shows a "Something went wrong" screen with a "Reload" button.
+
+
+---
+
+## TASK-16a: core/schemas + websocket event additions (schema amendment)
+
+**Supersedes (partial):** TASK-01 (core/schemas outputs), TASK-08 (api/websocket outputs)
+**Prerequisite for:** TASK-16
+**Spec sections:** §4.7 (session states), §8.2 (AgentTurn), §8.3 (AgentResponseBundle), §8.6 (KanbanTask), §9.2 (WebSocket events), §0.4 (constants) — all as corrected in spec v0.5
+**Dependencies:** TASK-01, TASK-08 (both must be complete)
+**Estimated complexity:** Low
+
+### Objective
+
+Correct schema defects identified during a spec audit after TASK-01 and TASK-08 were completed. The spec has since been updated (v0.5); these changes bring the implementation into alignment. TASK-16 cannot be executed until this task passes — it references TurnType, BundleType, SessionSubstate.INIT_DISPATCH, and AGENT_TIMEOUT_SECONDS, none of which exist yet.
+
+---
+
+### Prior work to handle
+
+The following files were produced by TASK-01 and TASK-08 and require correction. This is not a failure of those tasks — the spec changed after they were completed.
+
+**From TASK-01 (src/core/schemas/):**
+
+- enums.py — missing TurnType, BundleType; SessionSubstate missing INIT_DISPATCH; SessionState missing COMPLETED_WITH_WARNINGS; KanbanStatus may be missing or incomplete
+- journal.py — AgentTurn missing turn_type field; bundle_id incorrectly required (must be Optional)
+- The file containing AgentResponseBundle — missing bundle_type field
+- The file containing KanbanTask — status field is bare str instead of KanbanStatus
+- constants.py — missing AGENT_TIMEOUT_SECONDS
+
+**From TASK-08 (src/api/websocket/):**
+
+- events.py — missing init_dispatch_started, init_dispatch_complete, error_state_entered event constructors; missing retry_moderator and switch_moderator_provider client event types
+
+**From TASK-13 (frontend/src/):**
+
+- types/index.ts — types for AgentTurn, AgentResponseBundle, KanbanTask, SessionSubstate, SessionState are out of sync with the updated models
+
+---
+
+### Deliverables
+
+#### src/core/schemas/enums.py
+
+Add:
+
+```python
+class TurnType(str, Enum):
+    INIT = "INIT"
+    DELIBERATION = "DELIBERATION"
+
+class BundleType(str, Enum):
+    INIT = "INIT"
+    DELIBERATION = "DELIBERATION"
+```
+
+Update SessionSubstate to include INIT_DISPATCH:
+
+```python
+class SessionSubstate(str, Enum):
+    INIT_DISPATCH = "INIT_DISPATCH"
+    AGENT_AGGREGATION = "AGENT_AGGREGATION"
+    MODERATOR_TURN = "MODERATOR_TURN"
+    HUMAN_GATE = "HUMAN_GATE"
+    AGENT_DISPATCH = "AGENT_DISPATCH"
+```
+
+Update SessionState to include COMPLETED_WITH_WARNINGS:
+
+```python
+class SessionState(str, Enum):
+    PACKET_RECEIVED = "PACKET_RECEIVED"
+    ROLL_CALL = "ROLL_CALL"
+    ACTIVE = "ACTIVE"
+    CONSENSUS = "CONSENSUS"
+    COMPLETED = "COMPLETED"
+    COMPLETED_WITH_WARNINGS = "COMPLETED_WITH_WARNINGS"
+    ABANDONED = "ABANDONED"
+    ERROR = "ERROR"
+```
+
+Verify KanbanStatus exists with exactly these values (add or correct as needed):
+
+```python
+class KanbanStatus(str, Enum):
+    TO_DISCUSS = "TO_DISCUSS"
+    AGENT_DELIBERATION = "AGENT_DELIBERATION"
+    PENDING_HUMAN_DECISION = "PENDING_HUMAN_DECISION"
+    RESOLVED = "RESOLVED"
+```
+
+#### src/core/schemas/journal.py
+
+Replace AgentTurn with:
+
+```python
+class AgentTurn(BaseModel):
+    turn_id: UUID = Field(default_factory=uuid4)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    session_id: str
+    role_id: str
+    turn_type: TurnType = Field(description="INIT | DELIBERATION")
+    bundle_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which dispatch round this turn belongs to. "
+            "None for INIT turns — bundle_001 is created after all init responses arrive. "
+            "bundle_NNN for DELIBERATION turns."
+        )
+    )
+    prompt_hash: str = Field(
+        description=(
+            "SHA-256 of the exact prompt text sent. "
+            "For INIT: hash of the assembled init prompt. "
+            "For DELIBERATION: hash of the human-approved prompt."
+        )
+    )
+    approved_prompt: str = Field(
+        description=(
+            "The exact text sent to the provider. "
+            "For INIT: assembled init prompt (deterministic, not human-approved). "
+            "For DELIBERATION: exact text after human approval/modification."
+        )
+    )
+    agent_response: str = Field(description="The raw output returned by the model")
+    status: str = Field(default="OK", description="OK | TIMEOUT | ERROR")
+    error_message: Optional[str] = Field(default=None)
+    metadata: dict = Field(default_factory=dict, description="Token counts, latency_ms, finish_reason")
+```
+
+#### File containing AgentResponseBundle
+
+Add bundle_type as a required field:
+
+```python
+class AgentResponseBundle(BaseModel):
+    bundle_id: str = Field(description="Monotonically increasing: bundle_001, bundle_002, ...")
+    bundle_type: BundleType = Field(description="INIT | DELIBERATION")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    responses: list[BundledResponse]
+```
+
+#### File containing KanbanTask
+
+Change status from bare str to KanbanStatus:
+
+```python
+class KanbanTask(BaseModel):
+    task_id: str = Field(description="Maps to agenda question_id")
+    title: str
+    status: KanbanStatus = Field(default=KanbanStatus.TO_DISCUSS)
+    notes: str = ""
+    linked_card_id: Optional[UUID] = None
+    linked_quiz_id: Optional[UUID] = None
+```
+
+#### src/core/schemas/constants.py
+
+Add:
+
+```python
+AGENT_TIMEOUT_SECONDS: int = 120
+```
+
+#### src/api/websocket/events.py
+
+Add server->client event constructors:
+
+```python
+def init_dispatch_started(role_ids: list[str]) -> dict:
+    """Fired by runner.start_session when parallel init calls begin."""
+    return {"event": "init_dispatch_started", "data": {"role_ids": role_ids}}
+
+def init_dispatch_complete(success_count: int, error_count: int) -> dict:
+    """Fired by runner.start_session when all init API calls have returned."""
+    return {"event": "init_dispatch_complete", "data": {
+        "success_count": success_count,
+        "error_count": error_count,
+    }}
+
+def error_state_entered(message: str, failed_role: str, retry_count: int) -> dict:
+    """Fired when session transitions to ERROR state."""
+    return {"event": "error_state_entered", "data": {
+        "message": message,
+        "failed_role": failed_role,
+        "retry_count": retry_count,
+    }}
+```
+
+Add client->server event types to the ClientEvent union and parser:
+
+- retry_moderator — no data fields
+- switch_moderator_provider — fields: provider: str, model: str
+
+#### frontend/src/types/index.ts
+
+Update to match new models:
+
+```typescript
+export type TurnType = "INIT" | "DELIBERATION";
+export type BundleType = "INIT" | "DELIBERATION";
+export type KanbanStatus = "TO_DISCUSS" | "AGENT_DELIBERATION" | "PENDING_HUMAN_DECISION" | "RESOLVED";
+export type SessionSubstate = "INIT_DISPATCH" | "AGENT_AGGREGATION" | "MODERATOR_TURN" | "HUMAN_GATE" | "AGENT_DISPATCH";
+export type SessionState = "PACKET_RECEIVED" | "ROLL_CALL" | "ACTIVE" | "CONSENSUS" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "ABANDONED" | "ERROR";
+
+// AgentTurn: add turn_type, make bundle_id nullable
+export interface AgentTurn {
+  turn_id: string;
+  timestamp: string;
+  session_id: string;
+  role_id: string;
+  turn_type: TurnType;
+  bundle_id: string | null;
+  prompt_hash: string;
+  approved_prompt: string;
+  agent_response: string;
+  status: "OK" | "TIMEOUT" | "ERROR";
+  error_message: string | null;
+  metadata: Record<string, unknown>;
+}
+
+// AgentResponseBundle: add bundle_type
+export interface AgentResponseBundle {
+  bundle_id: string;
+  bundle_type: BundleType;
+  timestamp: string;
+  responses: BundledResponse[];
+}
+
+// KanbanTask: status is now typed
+export interface KanbanTask {
+  task_id: string;
+  title: string;
+  status: KanbanStatus;
+  notes: string;
+  linked_card_id: string | null;
+  linked_quiz_id: string | null;
+}
+```
+
+#### Test files
+
+**tests/core/test_schemas.py** — update any AgentTurn construction to include turn_type. Update any test asserting bundle_id is required. Add:
+
+- test_agent_turn_init_bundle_id_optional — construct with turn_type=INIT, bundle_id=None -> no error
+- test_agent_turn_deliberation_has_bundle_id — construct with turn_type=DELIBERATION, bundle_id="bundle_001" -> no error
+- test_bundle_type_required — construct AgentResponseBundle without bundle_type -> validation error
+- test_kanban_status_rejects_invalid — construct KanbanTask(status="BOGUS") -> validation error
+- test_init_dispatch_substate_valid — SessionSubstate("INIT_DISPATCH") -> no error
+- test_completed_with_warnings_state_valid — SessionState("COMPLETED_WITH_WARNINGS") -> no error
+- test_agent_timeout_constant — AGENT_TIMEOUT_SECONDS == 120
+
+**tests/api/test_websocket.py** — add:
+
+- test_init_dispatch_started_format — assert event shape matches spec
+- test_init_dispatch_complete_format — assert event shape matches spec
+- test_error_state_entered_format — assert event shape matches spec
+
+---
+
+### Acceptance criteria
+
+- [ ] TurnType and BundleType enums in enums.py with correct values.
+- [ ] SessionSubstate.INIT_DISPATCH is valid.
+- [ ] SessionState.COMPLETED_WITH_WARNINGS is valid.
+- [ ] KanbanStatus has all four values.
+- [ ] AgentTurn.turn_type is required, type TurnType.
+- [ ] AgentTurn.bundle_id is Optional[str], default None. Construction without it does not raise.
+- [ ] AgentResponseBundle.bundle_type is required. Construction without it raises.
+- [ ] KanbanTask.status typed as KanbanStatus. Invalid string raises.
+- [ ] AGENT_TIMEOUT_SECONDS = 120 in constants.py.
+- [ ] init_dispatch_started, init_dispatch_complete, error_state_entered in events.py with correct shape.
+- [ ] retry_moderator, switch_moderator_provider in client event parser.
+- [ ] frontend/src/types/index.ts updated — no any, matches all changed models.
+- [ ] pytest tests/ -m "not integration" -x --tb=short passes.
+- [ ] ruff check src/ tests/ and black --check src/ tests/ pass.
+- [ ] npm run lint passes.
+
+### Do NOT
+
+- Do not create new modules — all changes are to existing files.
+- Do not modify valid_packet.json — it contains no journal or bundle instances.
+- Do not change field names other than those listed above.
+---
+
+## TASK-16: orchestration/engine (cycle-1 flow correction)
+
+**Supersedes:** TASK-10 (orchestration/engine)
+**Spec sections:** §4.3, §4.4 (as corrected by spec v0.5 delta)
+**Dependencies:** `core/schemas` (TASK-01), `core/providers` (TASK-04), `core/journals` (TASK-05), `core/prompt_assembly` (TASK-06), `core/context` (TASK-11), `orchestration/tools` (TASK-09), `api/websocket` (TASK-08)
+**Estimated complexity:** High
+
+### Objective
+
+Replace the TASK-10 engine implementation with a corrected version that reflects the true session-start dependency structure. Init prompts are assembled deterministically from the packet and dispatched in parallel to all roles (Moderator + background agents) before the LangGraph loop starts. The LangGraph graph's entry point is `AGENT_AGGREGATION`. `MODERATOR_TURN` is only reached after a bundle exists. The human gate is never reached until the Moderator has processed the first bundle.
+
+---
+
+### Prior work to undo
+
+Perform these steps **before writing any new code**. Commit the cleanup separately with message `task-16: undo task-10 prior to rewrite`.
+
+1. **Remove the retry patch from `nodes/moderator.py`.** Delete any logic that re-calls the Moderator LLM when `pending_action_cards` is empty (committed as `fix: retry moderator when no action cards`). The function must call the provider exactly once per node invocation.
+
+2. **Delete `src/orchestration/engine/graph.py`.** Rewrite from scratch per deliverables below.
+
+3. **Delete `src/orchestration/engine/runner.py`.** Rewrite from scratch per deliverables below.
+
+4. **Delete `tests/integration/test_full_loop.py`** and **`tests/integration/test_session_to_dispatch.py`**. Rewrite from scratch per deliverables below.
+
+Do NOT delete `nodes/human_gate.py`, `nodes/dispatch.py`, `nodes/aggregation.py`, or `state.py` — these are revised in place.
+
+---
+
+### Deliverables
+
+#### `src/orchestration/engine/state.py` — revise in place
+
+Add one field to the `EngineState` TypedDict:
+
+```python
+is_cycle_one: bool
+# True from session start until AGENT_AGGREGATION completes for the first time.
+# Controls how aggregation_node constructs the bundle and what it appends to
+# Moderator conversation history. Set to True by start_session, False by
+# aggregation_node on first completion.
+```
+
+#### `src/orchestration/engine/runner.py` — rewrite
+
+```python
+async def start_session(
+    session_id: str,
+    data_root: Path,
+    broadcast_fn: Callable[[str, dict], Awaitable[None]],
+) -> None:
+    """
+    Assemble init prompts from packet and dispatch all roles in parallel.
+    Enters the LangGraph graph at agent_aggregation when all responses complete.
+    This function is the session entry point — it runs once and never loops.
+    """
+```
+
+Implementation steps in order:
+
+1. Load `packet.json` and `roll_call.json` from session dir. Validate both exist.
+2. Set `state.substate = "INIT_DISPATCH"` and persist `state.json`.
+3. Broadcast `{"event": "session_started", "data": {"substate": "INIT_DISPATCH"}}`.
+4. Assemble init prompts for all roles using `core/prompt_assembly`:
+   - **Moderator:** `assemble_moderator_prompt(packet, moderator_role, ...)` — full system prompt. First user message: packet objective, agenda items as a numbered list, and the instruction: *"Begin the session. Greet the facilitator, summarize the agenda, and indicate that you are waiting for the panel's opening positions."*
+   - **Each background agent:** `assemble_agent_prompt(packet, role)` — role system prompt. First user message: *"The session is beginning. You will receive your first question shortly. Briefly introduce yourself in your assigned role and confirm you are ready."*
+5. Dispatch all roles concurrently via `asyncio.gather(return_exceptions=True)`. For each role, call the assigned provider adapter with the assembled prompt.
+6. As each response arrives (use `asyncio.as_completed` or task callbacks for real-time broadcast):
+   - Append to that role's journal with `turn_type="INIT"`.
+   - Broadcast `{"event": "agent_message", "data": {"role_id": ..., "text": ..., "turn_type": "INIT"}}`.
+7. After all responses complete (success or error):
+   - For any role that timed out or errored, write an error INIT turn to that journal.
+   - Broadcast `{"event": "init_dispatch_complete", "data": {}}`.
+8. Initialize `EngineState` with `is_cycle_one=True`, all INIT journal data available, and enter the LangGraph graph at `agent_aggregation`:
+   ```python
+   initial_state = EngineState(is_cycle_one=True, ...)
+   graph.invoke(initial_state, config={"entry_point": "agent_aggregation"})
+   ```
+
+```python
+async def resume_session(
+    session_id: str,
+    data_root: Path,
+    broadcast_fn: Callable[[str, dict], Awaitable[None]],
+) -> None:
+    """
+    Resume a session from persisted state.json. Determines correct re-entry point.
+    """
+```
+
+Resume logic by substate:
+
+| Substate in state.json | INIT journals exist? | Action |
+|------------------------|----------------------|--------|
+| `INIT_DISPATCH` | None | Re-run `start_session` from scratch |
+| `INIT_DISPATCH` | Some (partial) | Enter graph at `agent_aggregation` with `is_cycle_one=True`; treat missing roles as TIMEOUT errors |
+| `MODERATOR_TURN` | All | Enter graph at `moderator_turn` |
+| `HUMAN_GATE` | All | Enter graph at `human_gate` (re-enters wait state) |
+| `AGENT_DISPATCH` | All | Enter ERROR state — dispatch may have partially completed; document as v1 limitation |
+| `AGENT_AGGREGATION` | All | Enter graph at `agent_aggregation` |
+
+#### `src/orchestration/engine/graph.py` — rewrite
+
+```python
+from langgraph.graph import StateGraph
+from .state import EngineState
+from .nodes.aggregation import agent_aggregation_node
+from .nodes.moderator import moderator_turn_node
+from .nodes.human_gate import human_gate_node, route_after_human_gate
+from .nodes.dispatch import agent_dispatch_node
+
+def build_graph() -> StateGraph:
+    graph = StateGraph(EngineState)
+
+    graph.add_node("agent_aggregation", agent_aggregation_node)
+    graph.add_node("moderator_turn", moderator_turn_node)
+    graph.add_node("human_gate", human_gate_node)
+    graph.add_node("agent_dispatch", agent_dispatch_node)
+
+    # Entry point: AGENT_AGGREGATION on cycle 1 (and on resume).
+    # runner.start_session invokes the graph starting here.
+    graph.set_entry_point("agent_aggregation")
+
+    graph.add_edge("agent_aggregation", "moderator_turn")
+
+    # Moderator turn always ends at human_gate — even if no cards generated.
+    # The human can always chat with the Moderator.
+    graph.add_edge("moderator_turn", "human_gate")
+
+    graph.add_conditional_edges(
+        "human_gate",
+        route_after_human_gate,
+        {
+            "agent_dispatch": "agent_dispatch",
+            "moderator_turn": "moderator_turn",
+            "consensus": END,
+        }
+    )
+
+    graph.add_edge("agent_dispatch", "agent_aggregation")
+
+    return graph.compile()
+```
+
+#### `src/orchestration/engine/nodes/moderator.py` — revise in place
+
+**Remove:** All retry-on-no-cards logic. The node calls the provider exactly once.
+
+**Add** at the top of the node function, before any other logic:
+
+```python
+# Invariant: this node is only entered after a bundle exists.
+# Violation indicates a graph routing bug, not a recoverable error.
+if not state.get("latest_bundle"):
+    raise EngineStateError(
+        "moderator_turn_node entered without a bundle in state. "
+        "This is a graph routing bug. Check graph entry point and aggregation output."
+    )
+```
+
+No other changes to the node's core logic.
+
+#### `src/orchestration/engine/nodes/dispatch.py` — revise in place
+
+This node handles **deliberation dispatch only**. Init dispatch is handled by `runner.start_session`.
+
+**Add** at the top of the node function:
+
+```python
+# Invariant: by the time this node is reached, approved_cards is non-empty.
+# human_gate routing enforces this — it only transitions here when cards exist.
+assert len(state.get("approved_cards", [])) > 0, (
+    "agent_dispatch_node entered with no approved cards. "
+    "Check human_gate routing logic."
+)
+```
+
+No other changes to dispatch logic.
+
+#### `src/orchestration/engine/nodes/aggregation.py` — revise in place
+
+Read `is_cycle_one` from state. Behavior differs for cycle 1 vs cycle 2+:
+
+**Cycle 1 (`is_cycle_one is True`):**
+
+- Collect INIT journal turns from all **background agent** roles only (exclude Moderator's INIT turn — it is already in the Moderator's conversation history as its own prior assistant turn and was broadcast directly to the chat pane).
+- Construct `bundle_001.json` from background agent INIT turns.
+- Write bundle to disk.
+- Append bundle as a new user message to Moderator conversation history: *"Initial panel responses received. [role_id]: [response text] ..."*
+- Broadcast `{"event": "bundle_ready", "data": {"bundle_id": "bundle_001"}}`.
+- Set `is_cycle_one = False` in state.
+- Deliver any queued human messages to state.
+- Transition: return state with `substate = "MODERATOR_TURN"`.
+
+**Cycle 2+ (`is_cycle_one is False`):** existing aggregation logic unchanged.
+
+#### `tests/orchestration/test_engine.py` — revise in place
+
+Add the following test cases:
+
+**`test_start_session_dispatches_all_roles_in_parallel`**
+- Set up session dir with valid packet and roll call (3 background agents + 1 Moderator).
+- Mock all 4 provider adapters.
+- Call `start_session`.
+- Assert: all 4 adapters called exactly once.
+- Assert: all 4 role journals have exactly one INIT turn.
+- Assert: state has `is_cycle_one = True` and `substate = "INIT_DISPATCH"` (set before dispatch) then `AGENT_AGGREGATION` (after graph entry).
+- Assert: `bundle_001.json` exists on disk after graph enters aggregation.
+
+**`test_moderator_turn_raises_without_bundle`**
+- Construct `EngineState` with `latest_bundle = None`.
+- Call `moderator_turn_node` directly.
+- Assert `EngineStateError` is raised.
+
+**`test_agent_dispatch_asserts_approved_cards`**
+- Construct `EngineState` with `approved_cards = []`.
+- Call `agent_dispatch_node` directly.
+- Assert `AssertionError` is raised.
+
+**`test_aggregation_cycle_one_excludes_moderator_init`**
+- Construct state with `is_cycle_one = True`.
+- Populate 3 background agent INIT journals + 1 Moderator INIT journal.
+- Call `agent_aggregation_node`.
+- Assert `bundle_001.json` contains exactly 3 entries (background agents only).
+- Assert Moderator INIT turn is NOT in bundle.
+- Assert `is_cycle_one = False` in returned state.
+
+**`test_aggregation_cycle_one_sets_flag_false`**
+- After `agent_aggregation_node` runs with `is_cycle_one = True`, assert returned state has `is_cycle_one = False`.
+
+#### `tests/integration/test_session_to_dispatch.py` — rewrite
+
+Test the seam between init dispatch completion and aggregation:
+
+1. Create session dir with valid packet + roll call.
+2. Write mock INIT journal turns for all background agents (simulate completed init dispatch).
+3. Set state `is_cycle_one = True`.
+4. Call `agent_aggregation_node` directly.
+5. Assert:
+   - `bundle_001.json` exists on disk.
+   - Bundle contains entries for all background agents only.
+   - Bundle structure matches the schema `core/context` expects (keys: `bundle_id`, `turns`, `created_at`).
+   - `is_cycle_one = False` in returned state.
+   - Returned state substate is `MODERATOR_TURN`.
+
+#### `tests/integration/test_full_loop.py` — rewrite
+
+Full cycle-1 path with all mocked providers. Verify disk artifacts at each step.
+
+```
+Step 1: init session → roll call confirms → start_session called
+  Assert: state.json substate = INIT_DISPATCH
+
+Step 2: all init dispatches complete (mocked responses)
+  Assert: 4 INIT journal turns on disk (1 per role)
+  Assert: all 4 agent_message WebSocket events broadcast
+
+Step 3: AGENT_AGGREGATION runs
+  Assert: bundle_001.json on disk with 3 entries (background agents)
+  Assert: is_cycle_one = False in state.json
+  Assert: state.json substate = MODERATOR_TURN
+
+Step 4: MODERATOR_TURN runs (mocked response: text + generate_action_cards tool call)
+  Assert: Moderator INIT journal has 2 turns (INIT + first MODERATOR turn)
+  Assert: state.json has pending_action_cards non-empty
+  Assert: state.json substate = HUMAN_GATE
+
+Step 5: HUMAN_GATE receives dispatch_approved event
+  Assert: state transitions to AGENT_DISPATCH
+
+Step 6: AGENT_DISPATCH runs (mocked responses for background agents)
+  Assert: background agent journals each have 2 turns (INIT + first deliberation)
+  Assert: state transitions to AGENT_AGGREGATION
+
+Step 7: AGENT_AGGREGATION runs
+  Assert: bundle_002.json on disk
+  Assert: state transitions to MODERATOR_TURN
+```
+
+---
+
+### Acceptance criteria
+
+- [ ] `start_session` calls provider adapters for all N roles concurrently — verified by mocking adapters with timing assertions (all calls initiated before any completes).
+- [ ] All role journals have exactly one `INIT` turn after `start_session` completes.
+- [ ] Moderator INIT response is broadcast as a chat message and present in Moderator journal, but NOT in `bundle_001.json`.
+- [ ] `bundle_001.json` contains INIT turns from all background agents and no others.
+- [ ] `is_cycle_one` is `True` after `start_session`, `False` after first `agent_aggregation_node` completes.
+- [ ] `moderator_turn_node` raises `EngineStateError` when called with `latest_bundle = None`.
+- [ ] `agent_dispatch_node` raises `AssertionError` when called with `approved_cards = []`.
+- [ ] `graph.get_entry_point() == "agent_aggregation"` (or equivalent LangGraph API check).
+- [ ] Full cycle-1 integration test (`test_full_loop.py`) passes all 7 steps with correct disk artifacts.
+- [ ] `resume_session` with `substate = INIT_DISPATCH` and no journals re-runs `start_session`.
+- [ ] `resume_session` with `substate = INIT_DISPATCH` and partial journals enters graph at `agent_aggregation` with `is_cycle_one = True`.
+- [ ] Grep for `retry` and `no action cards` in `nodes/moderator.py` returns zero matches.
+- [ ] `pytest tests/ -m "not integration" -x` passes.
+- [ ] `ruff check src/ tests/` and `black --check src/ tests/` pass.
+
+### Do NOT
+
+- Do not add a LangGraph node called `INIT_DISPATCH` — init dispatch is a runner function, not a graph node.
+- Do not route init prompts through `HUMAN_GATE` — init dispatch is not subject to human approval in v1.
+- Do not modify `nodes/human_gate.py` — it is correct as implemented.
+- Do not change any Pydantic model field types or names without also updating `frontend/src/types/index.ts` (if it exists).
+- Do not add streaming — providers return complete responses.
+- Do not use Celery, RQ, or any task queue — use `asyncio` directly.
+- Do not store session state in memory only — persist `state.json` after every transition.
