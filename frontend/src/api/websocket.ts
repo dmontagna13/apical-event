@@ -290,7 +290,9 @@ export class SessionWebSocket {
       this.handleIncoming(payload);
     });
 
-    this.socket.addEventListener("close", () => {
+    this.socket.addEventListener("close", (event) => {
+      // eslint-disable-next-line no-console
+      console.warn("WebSocket closed", { code: event.code, reason: event.reason });
       this.socket = null;
       if (!this.shouldReconnect) {
         return;
