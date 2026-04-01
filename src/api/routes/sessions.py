@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from pathlib import Path
 
@@ -18,11 +19,13 @@ from core.journals import (
     save_roll_call,
     save_state,
 )
+from core.providers import get_adapter
 from core.schemas import KanbanBoard, RollCall, SessionPacket, validate_packet
 from core.schemas.constants import SESSION_ID_HEX_LENGTH, SESSION_ID_PREFIX
 from core.schemas.enums import ErrorCode, SessionState, SessionSubstate
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class ApiError(RuntimeError):
@@ -190,7 +193,9 @@ async def submit_roll_call(
     role_ids = {role.role_id for role in packet.roles}
     moderator_id = next(role.role_id for role in packet.roles if role.is_moderator)
 
+    logger.info("Roll call request body: %s", roll_call.model_dump(mode="json"))
     errors = []
+    model_cache: dict[str, list[str] | None] = {}
     if {assignment.role_id for assignment in roll_call.assignments} != role_ids:
         errors.append("Roll call assignments must match packet roles.")
 
@@ -200,13 +205,33 @@ async def submit_roll_call(
             errors.append(f"Unknown provider: {assignment.provider}")
             continue
         if assignment.model not in provider.available_models:
-            errors.append(f"Unknown model for provider {assignment.provider}: {assignment.model}")
+            if assignment.provider not in model_cache:
+                api_key = resolve_api_key(provider)
+                if api_key:
+                    adapter = get_adapter(
+                        assignment.provider, provider.model_copy(update={"api_key": api_key})
+                    )
+                    try:
+                        model_cache[assignment.provider] = await adapter.list_models()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Model discovery failed for %s: %s", assignment.provider, exc
+                        )
+                        model_cache[assignment.provider] = None
+                else:
+                    model_cache[assignment.provider] = None
+            dynamic_models = model_cache.get(assignment.provider) or []
+            if assignment.model not in dynamic_models:
+                errors.append(
+                    f"Unknown model for provider {assignment.provider}: {assignment.model}"
+                )
         if assignment.role_id == moderator_id and not provider.supports_function_calling:
             errors.append("Moderator provider must support function calling.")
         if resolve_api_key(provider) is None:
             errors.append(f"Provider {assignment.provider} has no API key configured.")
 
     if errors:
+        logger.warning("Invalid roll call for session %s: %s", session_id, errors)
         raise ApiError(400, ErrorCode.VALIDATION_ERROR, "Invalid roll call", errors)
 
     save_roll_call(session_dir, roll_call)

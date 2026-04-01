@@ -6,9 +6,9 @@ import logging
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.dependencies import get_data_root
@@ -56,7 +56,9 @@ def create_app() -> FastAPI:
 
     static_dir = Path("/app/static")
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     def resolve_default_providers_path() -> Path | None:
         candidates = [
@@ -91,5 +93,19 @@ def create_app() -> FastAPI:
         data_root = get_data_root()
         ensure_providers_file(data_root)
         logger.info("Starting Apical-Event", extra={"data_root": str(data_root)})
+
+    @app.get("/{full_path:path}", response_model=None)
+    async def serve_spa(full_path: str):
+        """Serve index.html for SPA routes."""
+
+        if full_path.startswith(("api/", "ws/", "assets/")):
+            raise HTTPException(status_code=404)
+
+        index_path = Path("/app/static/index.html")
+        if not index_path.exists():
+            index_path = Path("frontend/dist/index.html")
+        if index_path.exists():
+            return FileResponse(index_path)
+        return JSONResponse(status_code=404, content={"error": "Frontend not built"})
 
     return app
