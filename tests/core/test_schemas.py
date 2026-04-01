@@ -14,6 +14,7 @@ from core.schemas import (
     AgentTurn,
     BundledResponse,
     DecisionQuiz,
+    ErrorCode,
     KanbanBoard,
     KanbanStatus,
     MeetingClass,
@@ -214,6 +215,14 @@ def test_enum_values() -> None:
         "APPROVED",
         "MODIFIED",
         "DENIED",
+    }
+    assert {code.value for code in ErrorCode} == {
+        "VALIDATION_ERROR",
+        "NOT_FOUND",
+        "PROVIDER_ERROR",
+        "CONFLICT",
+        "BAD_REQUEST",
+        "INTERNAL_ERROR",
     }
 
 

@@ -3,7 +3,14 @@
 from .actions import ActionCard, DecisionQuiz
 from .bundle import AgentResponseBundle, BundledResponse
 from .consensus import ConsensusOutput, ReturnHeader, SessionStatistics
-from .enums import ActionCardStatus, KanbanStatus, MeetingClass, SessionState, SessionSubstate
+from .enums import (
+    ActionCardStatus,
+    ErrorCode,
+    KanbanStatus,
+    MeetingClass,
+    SessionState,
+    SessionSubstate,
+)
 from .journal import AgentJournal, AgentTurn
 from .kanban import KanbanBoard, KanbanTask
 from .packet import (
@@ -26,6 +33,7 @@ __all__ = [
     "ReturnHeader",
     "SessionStatistics",
     "ActionCardStatus",
+    "ErrorCode",
     "KanbanStatus",
     "MeetingClass",
     "SessionState",

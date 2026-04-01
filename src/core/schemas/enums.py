@@ -50,3 +50,14 @@ class ActionCardStatus(str, Enum):
     APPROVED = "APPROVED"
     MODIFIED = "MODIFIED"
     DENIED = "DENIED"
+
+
+class ErrorCode(str, Enum):
+    """API error codes."""
+
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    NOT_FOUND = "NOT_FOUND"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+    CONFLICT = "CONFLICT"
+    BAD_REQUEST = "BAD_REQUEST"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
