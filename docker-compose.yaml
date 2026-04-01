@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  apical-event:
+    build: .
+    ports:
+      - "${APICAL_PORT:-8420}:8420"
+    volumes:
+      - ${APICAL_DATA:-./data}:/data
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    restart: unless-stopped

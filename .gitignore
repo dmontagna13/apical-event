@@ -1,2 +1,32 @@
-agents.md
-initial_prompt.md
+# Runtime data (user sessions, logs, config with real keys)
+data/
+*.log
+
+# Real configuration (contains API keys)
+config/providers.yaml
+config/last_roll_call.json
+config/roll_call_presets.json
+
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
