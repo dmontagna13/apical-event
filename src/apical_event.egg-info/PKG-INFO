@@ -1,0 +1,63 @@
+Metadata-Version: 2.4
+Name: apical-event
+Version: 0.1.0
+Summary: Apical-Event backend
+License: MIT
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn[standard]>=0.30
+Requires-Dist: pydantic>=2.7
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: httpx>=0.27
+Requires-Dist: langgraph>=0.2
+Requires-Dist: langchain-core>=0.3
+Provides-Extra: dev
+Requires-Dist: pytest==8.2.2; extra == "dev"
+Requires-Dist: pytest-asyncio==0.23.7; extra == "dev"
+Requires-Dist: httpx[test]==0.27.0; extra == "dev"
+Requires-Dist: ruff==0.5.5; extra == "dev"
+Requires-Dist: black==24.4.2; extra == "dev"
+Requires-Dist: pip-tools==7.4.1; extra == "dev"
+
+# Apical-Event
+
+Apical-Event is a locally hosted, browser-based workbench for orchestrating multi-agent deliberation sessions. It provides a FastAPI backend, LangGraph orchestration, and a React/Tailwind frontend for roll call, deliberation, and consensus capture.
+
+## Prerequisites
+
+- Docker (recommended)
+- OR Python 3.12+ and Node.js 20+ for local development
+
+## Quickstart (Docker)
+
+```bash
+docker-compose up --build
+```
+
+## Development setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pip install -e .
+cd frontend && npm ci
+```
+
+## Running tests
+
+```bash
+pytest tests/ -m "not integration" -x --tb=short
+```
+
+## Environment variables
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `APICAL_PORT` | Port exposed by the server | `8420` |
+| `APICAL_DATA` | Host path for persistent data | `./data` |
+| `GEMINI_API_KEY` | Gemini API key | *(empty)* |
+| `OPENAI_API_KEY` | OpenAI API key | *(empty)* |
+| `ANTHROPIC_API_KEY` | Anthropic API key | *(empty)* |
+| `DEEPSEEK_API_KEY` | DeepSeek API key | *(empty)* |
