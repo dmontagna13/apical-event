@@ -175,6 +175,17 @@ async def _run_graph(
                     session_id,
                     {"event": "consensus_triggered", "data": {"reason": "all_tasks_resolved"}},
                 )
+                # Fall through to run consensus capture on next loop iteration
+                continue
+
+            # --- CONSENSUS ---
+            if session_state == SessionState.CONSENSUS.value:
+                from orchestration.consensus.capture import run_consensus_capture
+
+                state = await run_consensus_capture(
+                    session_dir, state, manager, providers_config, data_root=data_root
+                )
+                save_state(session_dir, state)
                 break
 
             # --- MODERATOR_TURN ---
