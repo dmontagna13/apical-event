@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -57,9 +58,38 @@ def create_app() -> FastAPI:
     if static_dir.exists():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
+    def resolve_default_providers_path() -> Path | None:
+        candidates = [
+            Path("/app/config/providers.default.yaml"),
+            Path(__file__).resolve().parents[2] / "config" / "providers.default.yaml",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def ensure_providers_file(data_root: Path) -> None:
+        providers_path = data_root / "config" / "providers.yaml"
+        if providers_path.exists():
+            return
+        providers_path.parent.mkdir(parents=True, exist_ok=True)
+        template_path = resolve_default_providers_path()
+        if not template_path:
+            logger.warning(
+                "providers.default.yaml not found; skipping bootstrap",
+                extra={"data_root": str(data_root)},
+            )
+            return
+        shutil.copyfile(template_path, providers_path)
+        logger.info(
+            "Created providers.yaml from template",
+            extra={"providers_path": str(providers_path)},
+        )
+
     @app.on_event("startup")
     def log_startup() -> None:
         data_root = get_data_root()
+        ensure_providers_file(data_root)
         logger.info("Starting Apical-Event", extra={"data_root": str(data_root)})
 
     return app

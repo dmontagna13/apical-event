@@ -7,6 +7,7 @@ import type { ProviderConfigResponse, ProvidersResponse } from "../types/api";
 interface SetupWizardProps {
   providers: ProvidersResponse["providers"];
   onConfigured: () => void;
+  errorMessage?: string | null;
 }
 
 interface DraftState {
@@ -14,18 +15,20 @@ interface DraftState {
   baseUrl: string;
 }
 
-export function SetupWizard({ providers, onConfigured }: SetupWizardProps): JSX.Element {
+export function SetupWizard({
+  providers,
+  onConfigured,
+  errorMessage,
+}: SetupWizardProps): JSX.Element {
   const { pushToast } = useToast();
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [testing, setTesting] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   const hasConfiguredProvider = useMemo(() => {
-    const providerList = Object.values(providers) as ProviderConfigResponse[];
-    const configured = providerList.some((provider) => provider.has_api_key);
-    const drafted = Object.values(drafts).some((draft) => draft.apiKey.trim().length > 0);
-    return configured || drafted;
-  }, [providers, drafts]);
+    const entries = Object.entries(providers) as [string, ProviderConfigResponse][];
+    return entries.some(([key]) => testing[key] === "success");
+  }, [providers, testing]);
 
   const updateDraft = (key: string, next: Partial<DraftState>) => {
     setDrafts((prev) => ({
@@ -86,6 +89,9 @@ export function SetupWizard({ providers, onConfigured }: SetupWizardProps): JSX.
     }
   };
 
+  const providerEntries = Object.entries(providers) as [string, ProviderConfigResponse][];
+  const showEmptyState = providerEntries.length === 0;
+
   return (
     <div className="min-h-screen px-6 py-10">
       <div className="mx-auto max-w-4xl">
@@ -98,9 +104,23 @@ export function SetupWizard({ providers, onConfigured }: SetupWizardProps): JSX.
           </p>
         </div>
 
-        <div className="mt-8 grid gap-6">
-          {(Object.entries(providers) as [string, ProviderConfigResponse][]).map(
-            ([key, provider]) => {
+        {showEmptyState ? (
+          <div className="mt-8 rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-700">
+            <p className="font-semibold">Unable to load providers.</p>
+            <p className="mt-2">
+              {errorMessage ?? "Check that providers.yaml exists and reload the page."}
+            </p>
+            <button
+              type="button"
+              onClick={onConfigured}
+              className="mt-4 rounded-full border border-amber-200 px-4 py-2 text-xs font-semibold text-amber-700"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="mt-8 grid gap-6">
+            {providerEntries.map(([key, provider]) => {
               const status = testing[key];
               const draft = drafts[key];
               return (
@@ -127,9 +147,9 @@ export function SetupWizard({ providers, onConfigured }: SetupWizardProps): JSX.
                         type="password"
                         placeholder={provider.has_api_key ? "Key is set" : "Paste API key"}
                         value={draft?.apiKey ?? ""}
-                      onChange={(event: { target: { value: string } }) =>
-                        updateDraft(key, { apiKey: event.target.value })
-                      }
+                        onChange={(event: { target: { value: string } }) =>
+                          updateDraft(key, { apiKey: event.target.value })
+                        }
                         className="mt-2 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-ocean"
                       />
                     </label>
@@ -140,9 +160,9 @@ export function SetupWizard({ providers, onConfigured }: SetupWizardProps): JSX.
                           type="text"
                           placeholder="https://api.example.com"
                           value={draft?.baseUrl ?? ""}
-                        onChange={(event: { target: { value: string } }) =>
-                          updateDraft(key, { baseUrl: event.target.value })
-                        }
+                          onChange={(event: { target: { value: string } }) =>
+                            updateDraft(key, { baseUrl: event.target.value })
+                          }
                           className="mt-2 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-ocean"
                         />
                       </label>
@@ -169,15 +189,15 @@ export function SetupWizard({ providers, onConfigured }: SetupWizardProps): JSX.
                   </div>
                 </div>
               );
-            }
-          )}
-        </div>
+            })}
+          </div>
+        )}
 
         <div className="mt-8 flex items-center justify-between rounded-3xl bg-white/80 p-6 shadow-card">
           <div>
             <h3 className="font-display text-lg text-ink">Ready to proceed?</h3>
             <p className="text-sm text-slate-600">
-              You need at least one configured provider to start a session.
+              You need at least one successful connection test to start a session.
             </p>
           </div>
           <button

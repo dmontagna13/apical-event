@@ -111,6 +111,7 @@ function Shell(): JSX.Element {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const location = useLocation();
 
   const refreshProviders = useCallback(async () => {
@@ -118,8 +119,10 @@ function Shell(): JSX.Element {
       setLoadingProviders(true);
       const data = await apiFetch<ProvidersResponse>("/api/config/providers");
       setProviders(data);
+      setProviderError(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load providers";
+      setProviderError(message);
       pushToast(message, "error");
     } finally {
       setLoadingProviders(false);
@@ -144,7 +147,11 @@ function Shell(): JSX.Element {
 
   if (!hasConfiguredProvider) {
     return (
-      <SetupWizard providers={providers?.providers ?? {}} onConfigured={refreshProviders} />
+      <SetupWizard
+        providers={providers?.providers ?? {}}
+        onConfigured={refreshProviders}
+        errorMessage={providerError}
+      />
     );
   }
 

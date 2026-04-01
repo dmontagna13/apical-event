@@ -22,7 +22,8 @@ RUN adduser --disabled-password --gecos '' appuser
 COPY --from=builder-backend /usr/local /usr/local
 COPY --from=builder-frontend /app/frontend/dist /app/static
 COPY config/providers.default.yaml /app/config/providers.default.yaml
+COPY scripts/docker-entrypoint.sh /app/scripts/docker-entrypoint.sh
 RUN chown -R appuser:appuser /app
-USER appuser
 EXPOSE 8420
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 CMD ["uvicorn", "api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8420"]
