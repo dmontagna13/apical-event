@@ -72,6 +72,8 @@ export function Workbench(): JSX.Element {
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const [socket] = useState(() => new SessionWebSocket());
+  const actionCardsRef = useRef<ActionCard[]>([]);
+  const quizzesRef = useRef<DecisionQuiz[]>([]);
 
   const normalizeCardAction = useCallback((status: ActionCard["status"]): CardDraft["action"] => {
     if (status === "APPROVED" || status === "MODIFIED" || status === "DENIED" || status === "PENDING") {
@@ -233,6 +235,14 @@ export function Workbench(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    actionCardsRef.current = actionCards;
+  }, [actionCards]);
+
+  useEffect(() => {
+    quizzesRef.current = quizzes;
+  }, [quizzes]);
+
+  useEffect(() => {
     if (!sessionId) {
       return;
     }
@@ -337,13 +347,13 @@ export function Workbench(): JSX.Element {
     };
 
     const handleDecisionQuiz = (data: { quiz: DecisionQuiz }) => {
-      const next = [...quizzes, data.quiz];
+      const next = [...quizzesRef.current, data.quiz];
       const unique = new Map(next.map((item) => [item.quiz_id, item]));
       syncQuizzes(Array.from(unique.values()));
     };
 
     const handleActionCards = (data: { cards: ActionCard[] }) => {
-      const next = [...actionCards, ...data.cards];
+      const next = [...actionCardsRef.current, ...data.cards];
       const unique = new Map(next.map((item) => [item.card_id, item]));
       syncCards(Array.from(unique.values()));
     };
@@ -417,11 +427,9 @@ export function Workbench(): JSX.Element {
       socket.disconnect();
     };
   }, [
-    actionCards,
     appendMessage,
     buildMessagesFromHistory,
     pushToast,
-    quizzes,
     resetQueuedIfNeeded,
     sessionId,
     socket,
