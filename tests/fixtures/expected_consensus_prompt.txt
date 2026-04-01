@@ -1,0 +1,52 @@
+CONSENSUS CAPTURE — BP-2026-02-20-005
+
+You are producing the final return for this deliberation session.
+
+OUTPUT ONLY the return content. No commentary, no preamble, no sign-off.
+
+RETURN HEADER (include all fields):
+MEETING_ID: <value>
+RETURN_TYPE: <value>
+RECOMMENDED_STATUS: <value>
+CONFLICTS_WITH: <value>
+PROPOSES_BOUNDARY_CHANGE: <value>
+R3_EVIDENCE_REQUIRED: <value>
+EVIDENCE_PACK: <value>
+OPEN_QUESTIONS: <value>
+SYNTHESIS_PLANNED: <value>
+
+---
+
+REQUIRED SECTIONS:
+- PRIMARY_DOMAINS_COUNT
+- DOMAIN_DECISIONS_MAPPING
+- INTERFACE_CANDIDATES (minimum: 3)
+- DECISION_ROADMAP
+
+STOP CONDITION (must be satisfied):
+All decisions assigned to exactly one domain (or flagged cross-cutting with owner), >=3 interface candidates recorded, and >=2 roadmap gates defined.
+
+CONTEXT DOCUMENTS:
+### 02_DECISIONS/DECISION_INVENTORY.md [RATIFIED]
+# DECISION INVENTORY
+| DECISION_ID | QUESTION | STATUS |
+| D-01 | ... | RATIFIED |
+
+### 00_META/TEMPLATES/DOMAIN_MAP.template.md
+# DOMAIN MAP
+## Domains
+- ...
+
+### 00_META/TEMPLATES/DECISION_ROADMAP.template.md
+# DECISION ROADMAP
+## Gates
+- ...
+
+### 00_META/TEMPLATES/RETURN_HEADER.template.md
+> Paste this header at the TOP of every breakout return file.
+
+### 00_META/PROCESS.md
+### section 0.2 Return header block (required on all breakout returns)
+
+SESSION HISTORY:
+SESSION_HISTORY_PLACEHOLDER
