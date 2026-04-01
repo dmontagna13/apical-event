@@ -10,7 +10,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from api.dependencies import get_data_root
 from api.websocket.events import error_event, state_sync_event
 from api.websocket.manager import ConnectionManager
-from core.journals import load_state, read_all_bundles, read_all_journals
+from core.journals import load_state, read_all_bundles, read_all_journals, save_state
 from core.schemas.enums import ErrorCode, SessionSubstate
 
 manager = ConnectionManager()
@@ -61,7 +61,46 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                             "dispatch_approved not allowed in current substate",
                         )
                     )
-            # Other events are handled by the orchestration engine in Phase 4.
+                else:
+                    from orchestration.engine.runner import signal_human_gate
+
+                    data = payload.get("data", {})
+                    delivered = await signal_human_gate(
+                        session_id,
+                        {
+                            "type": "dispatch_approved",
+                            "card_resolutions": data.get("card_resolutions", []),
+                            "quiz_answers": data.get("quiz_answers", []),
+                        },
+                    )
+                    if not delivered:
+                        await websocket.send_json(
+                            error_event(ErrorCode.CONFLICT, "No engine gate waiting for this session")
+                        )
+            elif event == "chat_message":
+                state = load_state(session_dir)
+                substate = state.get("substate")
+                if substate == SessionSubstate.HUMAN_GATE.value:
+                    from orchestration.engine.runner import signal_human_gate
+
+                    data = payload.get("data", {})
+                    await signal_human_gate(
+                        session_id,
+                        {"type": "chat_message", "content": data.get("content", "")},
+                    )
+                elif substate in (
+                    SessionSubstate.AGENT_DISPATCH.value,
+                    SessionSubstate.AGENT_AGGREGATION.value,
+                ):
+                    # Queue the message — delivered to moderator after dispatch completes
+                    state.setdefault("queued_human_messages", []).append(
+                        payload.get("data", {}).get("content", "")
+                    )
+                    save_state(session_dir, state)
+                    await websocket.send_json(
+                        {"event": "message_queued",
+                         "data": {"message": "Message queued — will be delivered after agents respond"}}
+                    )
     except WebSocketDisconnect:
         manager.disconnect(session_id, websocket)
     except FileNotFoundError:

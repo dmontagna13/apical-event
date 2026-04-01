@@ -5,7 +5,9 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Response
+import asyncio
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 
 from api.dependencies import get_data_root, get_providers
 from core.config import ProviderConfig, resolve_api_key, save_last_roll_call
@@ -168,9 +170,10 @@ def get_bundles(session_id: str, data_root: Path = Depends(get_data_root)) -> di
 
 
 @router.post("/api/sessions/{session_id}/roll-call")
-def submit_roll_call(
+async def submit_roll_call(
     session_id: str,
     roll_call: RollCall,
+    background_tasks: BackgroundTasks,
     data_root: Path = Depends(get_data_root),
     providers: dict[str, ProviderConfig] = Depends(get_providers),
 ) -> dict:
@@ -208,7 +211,11 @@ def submit_roll_call(
     state["substate"] = SessionSubstate.MODERATOR_TURN.value
     save_state(session_dir, state)
 
-    # TODO: trigger first moderator turn via orchestration engine (TASK-10)
+    # Trigger first moderator turn as a background task (TASK-10)
+    from api.websocket.handler import manager as ws_manager
+    from orchestration.engine.runner import start_session as _start_session
+
+    background_tasks.add_task(_start_session, session_dir, data_root, ws_manager)
 
     return {"ok": True, "state": SessionState.ACTIVE.value}
 
