@@ -47,6 +47,10 @@ declare module "react" {
   export function useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;
   export function useMemo<T>(factory: () => T, deps: readonly unknown[]): T;
   export function useCallback<T>(callback: T, deps: readonly unknown[]): T;
+  export interface RefObject<T> {
+    current: T | null;
+  }
+  export function useRef<T>(initialValue: T | null): RefObject<T>;
 
   export const StrictMode: FunctionComponent<{ children?: ReactNode }>;
 

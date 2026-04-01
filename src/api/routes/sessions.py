@@ -149,6 +149,9 @@ def get_session_state(session_id: str, data_root: Path = Depends(get_data_root))
     state = _read_json(session_dir / "state.json")
     packet = SessionPacket.model_validate_json((session_dir / "packet.json").read_text())
     state["packet"] = packet.model_dump(mode="json", by_alias=True)
+    consensus_path = session_dir / "output" / "consensus.json"
+    if consensus_path.exists():
+        state["consensus"] = _read_json(consensus_path)
     return state
 
 

@@ -15,6 +15,7 @@ import { Sidebar } from "./components/Sidebar";
 import { RollCall } from "./pages/RollCall";
 import { SetupWizard } from "./pages/SetupWizard";
 import { SessionList } from "./pages/SessionList";
+import { Workbench } from "./pages/Workbench";
 import type { ProviderConfigResponse, ProvidersResponse, SessionMetadataResponse } from "./types/api";
 
 function LoadingScreen({ message }: { message: string }): JSX.Element {
@@ -88,25 +89,11 @@ function SessionRouter(): JSX.Element {
   }
 
   if (session.state === "ACTIVE" || session.state === "CONSENSUS") {
-    return (
-      <div className="p-10">
-        <h1 className="font-display text-2xl text-ink">Workbench</h1>
-        <p className="mt-3 text-sm text-slate-600">
-          The workbench UI is coming online in the next step.
-        </p>
-      </div>
-    );
+    return <Workbench />;
   }
 
   if (session.state === "COMPLETED" || session.state === "ABANDONED") {
-    return (
-      <div className="p-10">
-        <h1 className="font-display text-2xl text-ink">Session archive</h1>
-        <p className="mt-3 text-sm text-slate-600">
-          This session is read-only. The archive view lands in the next step.
-        </p>
-      </div>
-    );
+    return <Workbench />;
   }
 
   return (

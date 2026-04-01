@@ -2,6 +2,7 @@ import type {
   ActionCard,
   AgentJournal,
   AgentResponseBundle,
+  BundledResponse,
   DecisionQuiz,
   KanbanBoard,
   KanbanTask,
@@ -61,6 +62,25 @@ export interface AgentBundleCompleteData {
   errors_count: number;
 }
 
+export interface BundleReadyData {
+  bundle_id: string;
+  responses: BundledResponse[];
+}
+
+export interface ConsensusTriggeredData {
+  reason: string;
+}
+
+export interface ConsensusCompleteData {
+  validation_warnings: string[];
+  completed_at: string;
+}
+
+export interface ToolCallDroppedData {
+  tool: string;
+  errors: string[];
+}
+
 export interface ErrorEventData {
   code: string;
   message: string;
@@ -103,6 +123,10 @@ export type ServerEventMap = {
   agent_response_received: AgentResponseReceivedData;
   agent_response_error: AgentResponseErrorData;
   agent_bundle_complete: AgentBundleCompleteData;
+  bundle_ready: BundleReadyData;
+  consensus_triggered: ConsensusTriggeredData;
+  consensus_complete: ConsensusCompleteData;
+  tool_call_dropped: ToolCallDroppedData;
   error: ErrorEventData;
   state_sync: StateSyncData;
   human_message_queued: HumanMessageQueuedData;
@@ -339,6 +363,14 @@ export class SessionWebSocket {
           });
         }
         return;
+      case "bundle_ready":
+        if (isRecord(data)) {
+          this.emit("bundle_ready", {
+            bundle_id: asString(data.bundle_id),
+            responses: Array.isArray(data.responses) ? (data.responses as BundledResponse[]) : [],
+          });
+        }
+        return;
       case "agent_response":
         if (isRecord(data)) {
           const status = asString(data.status, "OK");
@@ -356,6 +388,31 @@ export class SessionWebSocket {
               error_message: asString(data.error_message, "Agent error"),
             });
           }
+        }
+        return;
+      case "consensus_triggered":
+        if (isRecord(data)) {
+          this.emit("consensus_triggered", { reason: asString(data.reason) });
+        }
+        return;
+      case "consensus_complete":
+        if (isRecord(data)) {
+          this.emit("consensus_complete", {
+            validation_warnings: Array.isArray(data.validation_warnings)
+              ? data.validation_warnings.filter((item): item is string => typeof item === "string")
+              : [],
+            completed_at: asString(data.completed_at),
+          });
+        }
+        return;
+      case "tool_call_dropped":
+        if (isRecord(data)) {
+          this.emit("tool_call_dropped", {
+            tool: asString(data.tool),
+            errors: Array.isArray(data.errors)
+              ? data.errors.filter((item): item is string => typeof item === "string")
+              : [],
+          });
         }
         return;
       case "error":

@@ -1,5 +1,6 @@
 import type {
   ActionCard,
+  ConsensusOutput,
   DecisionQuiz,
   KanbanBoard,
   SessionPacket,
@@ -63,6 +64,7 @@ export interface SessionStateResponse {
   pending_quizzes?: DecisionQuiz[];
   chat_history?: { role: string; content: string }[];
   packet?: SessionPacket;
+  consensus?: ConsensusOutput;
 }
 
 export interface RollCallResponse {
