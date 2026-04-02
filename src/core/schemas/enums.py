@@ -11,6 +11,7 @@ class SessionState(str, Enum):
     ACTIVE = "ACTIVE"
     CONSENSUS = "CONSENSUS"
     COMPLETED = "COMPLETED"
+    COMPLETED_WITH_WARNINGS = "COMPLETED_WITH_WARNINGS"
     ABANDONED = "ABANDONED"
     ERROR = "ERROR"
 
@@ -18,10 +19,25 @@ class SessionState(str, Enum):
 class SessionSubstate(str, Enum):
     """Substate for ACTIVE sessions."""
 
+    INIT_DISPATCH = "INIT_DISPATCH"
+    AGENT_AGGREGATION = "AGENT_AGGREGATION"
     MODERATOR_TURN = "MODERATOR_TURN"
     HUMAN_GATE = "HUMAN_GATE"
     AGENT_DISPATCH = "AGENT_DISPATCH"
-    AGENT_AGGREGATION = "AGENT_AGGREGATION"
+
+
+class TurnType(str, Enum):
+    """Agent turn type."""
+
+    INIT = "INIT"
+    DELIBERATION = "DELIBERATION"
+
+
+class BundleType(str, Enum):
+    """Agent response bundle type."""
+
+    INIT = "INIT"
+    DELIBERATION = "DELIBERATION"
 
 
 class MeetingClass(str, Enum):

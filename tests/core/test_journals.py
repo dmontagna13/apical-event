@@ -26,7 +26,15 @@ from core.journals import (
     write_bundle,
     write_bundle_summary,
 )
-from core.schemas import AgentResponseBundle, AgentTurn, BundledResponse, RoleAssignment, RollCall
+from core.schemas import (
+    AgentResponseBundle,
+    AgentTurn,
+    BundledResponse,
+    BundleType,
+    RoleAssignment,
+    RollCall,
+    TurnType,
+)
 from core.schemas.constants import BUNDLES_DIR, JOURNALS_DIR, OUTPUT_DIR
 
 
@@ -41,6 +49,7 @@ def test_append_turn_immutable(tmp_session_dir: Path) -> None:
     turn1 = AgentTurn(
         session_id="sess_test",
         role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
         bundle_id="bundle_001",
         prompt_hash="",
         approved_prompt="first",
@@ -57,6 +66,7 @@ def test_append_turn_immutable(tmp_session_dir: Path) -> None:
     turn2 = AgentTurn(
         session_id="sess_test",
         role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
         bundle_id="bundle_002",
         prompt_hash="",
         approved_prompt="second",
@@ -66,6 +76,7 @@ def test_append_turn_immutable(tmp_session_dir: Path) -> None:
     turn3 = AgentTurn(
         session_id="sess_test",
         role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
         bundle_id="bundle_003",
         prompt_hash="",
         approved_prompt="third",
@@ -87,6 +98,7 @@ def test_prompt_hash_computation(tmp_session_dir: Path) -> None:
     turn = AgentTurn(
         session_id="sess_test",
         role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
         bundle_id="bundle_001",
         prompt_hash="",
         approved_prompt="hello",
@@ -108,6 +120,7 @@ def test_bundle_id_generation(tmp_session_dir: Path) -> None:
     assert next_bundle_id(tmp_session_dir) == "bundle_001"
     bundle = AgentResponseBundle(
         bundle_id="bundle_003",
+        bundle_type=BundleType.DELIBERATION,
         responses=[
             BundledResponse(
                 role_id="RG-FAC",
@@ -125,6 +138,7 @@ def test_bundle_id_generation(tmp_session_dir: Path) -> None:
 def test_read_all_bundles_sorted(tmp_session_dir: Path) -> None:
     bundle1 = AgentResponseBundle(
         bundle_id="bundle_002",
+        bundle_type=BundleType.DELIBERATION,
         responses=[
             BundledResponse(
                 role_id="RG-FAC",
@@ -137,6 +151,7 @@ def test_read_all_bundles_sorted(tmp_session_dir: Path) -> None:
     )
     bundle2 = AgentResponseBundle(
         bundle_id="bundle_001",
+        bundle_type=BundleType.DELIBERATION,
         responses=[
             BundledResponse(
                 role_id="RG-CRIT",

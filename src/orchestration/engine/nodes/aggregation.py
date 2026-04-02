@@ -10,7 +10,7 @@ from uuid import UUID
 from api.websocket.manager import ConnectionManager
 from core.journals import write_bundle
 from core.schemas import AgentResponseBundle, BundledResponse
-from core.schemas.enums import SessionSubstate
+from core.schemas.enums import BundleType, SessionSubstate
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ async def run_agent_aggregation(
 
     bundle = AgentResponseBundle(
         bundle_id=bundle_id,
+        bundle_type=BundleType.DELIBERATION,
         timestamp=datetime.now(tz=timezone.utc),
         responses=responses,
     )

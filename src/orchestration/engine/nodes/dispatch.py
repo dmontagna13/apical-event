@@ -16,7 +16,7 @@ from core.providers.base import Message, ProviderError
 from core.providers.factory import get_adapter
 from core.schemas import AgentTurn, RollCall, SessionPacket
 from core.schemas.constants import AGENT_TIMEOUT_SECONDS
-from core.schemas.enums import SessionSubstate
+from core.schemas.enums import SessionSubstate, TurnType
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +66,21 @@ async def run_agent_dispatch(
     dispatch_results: list[dict] = []
     for card, result in zip(approved_cards, raw_results):
         if isinstance(result, Exception):
-            logger.error("Unhandled exception dispatching %s: %s", card.get("target_role_id"), result)
-            dispatch_results.append({
-                "role_id": card.get("target_role_id", "unknown"),
-                "turn_id": str(uuid4()),
-                "response_text": "",
-                "status": "ERROR",
-                "error_message": str(result),
-                "latency_ms": 0,
-            })
+            logger.error(
+                "Unhandled exception dispatching %s: %s",
+                card.get("target_role_id"),
+                result,
+            )
+            dispatch_results.append(
+                {
+                    "role_id": card.get("target_role_id", "unknown"),
+                    "turn_id": str(uuid4()),
+                    "response_text": "",
+                    "status": "ERROR",
+                    "error_message": str(result),
+                    "latency_ms": 0,
+                }
+            )
         else:
             dispatch_results.append(result)
 
@@ -174,6 +180,7 @@ async def _dispatch_one(
         turn_id=turn_id,
         session_id=session_id,
         role_id=role_id,
+        turn_type=TurnType.DELIBERATION,
         bundle_id=bundle_id,
         prompt_hash="",  # computed by append_turn
         approved_prompt=approved_prompt,

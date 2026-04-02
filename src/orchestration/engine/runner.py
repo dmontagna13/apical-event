@@ -99,11 +99,14 @@ async def resume_session(
         save_state(session_dir, state)
         await manager.broadcast(
             session_id,
-            {"event": "error", "data": {
-                "code": "INTERNAL_ERROR",
-                "message": "Session crashed during agent dispatch",
-                "recoverable": False,
-            }},
+            {
+                "event": "error",
+                "data": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Session crashed during agent dispatch",
+                    "recoverable": False,
+                },
+            },
         )
         return
 
@@ -227,11 +230,14 @@ async def _run_graph(
             save_state(session_dir, state)
             await manager.broadcast(
                 session_id,
-                {"event": "error", "data": {
-                    "code": "INTERNAL_ERROR",
-                    "message": f"Engine error: {exc}",
-                    "recoverable": False,
-                }},
+                {
+                    "event": "error",
+                    "data": {
+                        "code": "INTERNAL_ERROR",
+                        "message": f"Engine error: {exc}",
+                        "recoverable": False,
+                    },
+                },
             )
         except Exception:  # noqa: BLE001
             logger.exception("Failed to save ERROR state for session %s", session_id)

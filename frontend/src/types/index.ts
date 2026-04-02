@@ -6,14 +6,16 @@ export type SessionState =
   | "ACTIVE"
   | "CONSENSUS"
   | "COMPLETED"
+  | "COMPLETED_WITH_WARNINGS"
   | "ABANDONED"
   | "ERROR";
 
 export type SessionSubstate =
+  | "INIT_DISPATCH"
+  | "AGENT_AGGREGATION"
   | "MODERATOR_TURN"
   | "HUMAN_GATE"
-  | "AGENT_DISPATCH"
-  | "AGENT_AGGREGATION";
+  | "AGENT_DISPATCH";
 
 export type MeetingClass =
   | "DISCOVERY"
@@ -27,6 +29,9 @@ export type KanbanStatus =
   | "AGENT_DELIBERATION"
   | "PENDING_HUMAN_DECISION"
   | "RESOLVED";
+
+export type TurnType = "INIT" | "DELIBERATION";
+export type BundleType = "INIT" | "DELIBERATION";
 
 export type ActionCardStatus = "PENDING" | "APPROVED" | "MODIFIED" | "DENIED";
 
@@ -126,7 +131,7 @@ export interface DecisionQuiz {
 export interface KanbanTask {
   task_id: string;
   title: string;
-  status: KanbanStatus | string;
+  status: KanbanStatus;
   notes: string;
   linked_card_id?: string | null;
   linked_quiz_id?: string | null;
@@ -141,12 +146,13 @@ export interface AgentTurn {
   timestamp: string;
   session_id: string;
   role_id: string;
-  bundle_id: string;
+  turn_type: TurnType;
+  bundle_id: string | null;
   prompt_hash: string;
   approved_prompt: string;
   agent_response: string;
-  status: string;
-  error_message?: string | null;
+  status: "OK" | "TIMEOUT" | "ERROR";
+  error_message: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -167,6 +173,7 @@ export interface BundledResponse {
 
 export interface AgentResponseBundle {
   bundle_id: string;
+  bundle_type: BundleType;
   timestamp: string;
   responses: BundledResponse[];
 }

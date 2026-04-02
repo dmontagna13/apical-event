@@ -36,13 +36,13 @@ def validate_consensus(output: dict, output_contract: OutputContract) -> list[st
         if count is None:
             errors.append(f"Cannot determine item count for minimum_counts key: '{count_key}'")
         elif count < minimum:
-            errors.append(
-                f"Section '{count_key}' has {count} items but minimum is {minimum}"
-            )
+            errors.append(f"Section '{count_key}' has {count} items but minimum is {minimum}")
 
     # 4. Stop condition (warning only — does not trigger retry)
     if not output.get("stop_condition_met", False):
-        errors.append("Warning: stop_condition_met is False (consensus forced before stop condition)")
+        errors.append(
+            "Warning: stop_condition_met is False (consensus forced before stop condition)"
+        )
 
     return errors
 

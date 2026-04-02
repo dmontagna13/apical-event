@@ -11,7 +11,9 @@ def get_tool_definitions() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name="generate_action_cards",
-            description="Create one or more prompt cards to send to background agents for deliberation.",
+            description=(
+                "Create one or more prompt cards to send to background agents for deliberation."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -22,15 +24,23 @@ def get_tool_definitions() -> list[ToolDefinition]:
                             "properties": {
                                 "target_role_id": {
                                     "type": "string",
-                                    "description": "The role_id of the agent to receive this prompt",
+                                    "description": (
+                                        "The role_id of the agent to receive this prompt"
+                                    ),
                                 },
                                 "prompt_text": {
                                     "type": "string",
-                                    "description": "The exact prompt to send to the agent (subject to human approval)",
+                                    "description": (
+                                        "The exact prompt to send to the agent "
+                                        "(subject to human approval)"
+                                    ),
                                 },
                                 "context_note": {
                                     "type": "string",
-                                    "description": "Brief note to the human operator explaining why this prompt is needed",
+                                    "description": (
+                                        "Brief note to the human operator explaining why "
+                                        "this prompt is needed"
+                                    ),
                                 },
                                 "linked_question_ids": {
                                     "type": "array",
@@ -72,7 +82,9 @@ def get_tool_definitions() -> list[ToolDefinition]:
                     },
                     "context_summary": {
                         "type": "string",
-                        "description": "Moderator's synthesis of agent positions leading to this decision",
+                        "description": (
+                            "Moderator's synthesis of agent positions leading to this decision"
+                        ),
                     },
                 },
                 "required": ["decision_title", "options", "context_summary"],

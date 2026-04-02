@@ -57,7 +57,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 logger.warning("WebSocket received invalid JSON for session=%s", session_id)
-                await websocket.send_json(error_event(ErrorCode.VALIDATION_ERROR, "Invalid JSON payload"))
+                await websocket.send_json(
+                    error_event(ErrorCode.VALIDATION_ERROR, "Invalid JSON payload")
+                )
                 continue
             event = payload.get("event")
             if event == "dispatch_approved":
@@ -83,7 +85,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     )
                     if not delivered:
                         await websocket.send_json(
-                            error_event(ErrorCode.CONFLICT, "No engine gate waiting for this session")
+                            error_event(
+                                ErrorCode.CONFLICT,
+                                "No engine gate waiting for this session",
+                            )
                         )
             elif event == "chat_message":
                 state = load_state(session_dir)
@@ -106,14 +111,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     )
                     save_state(session_dir, state)
                     await websocket.send_json(
-                        {"event": "message_queued",
-                         "data": {"message": "Message queued — will be delivered after agents respond"}}
+                        {
+                            "event": "message_queued",
+                            "data": {
+                                "message": (
+                                    "Message queued — will be delivered after agents respond"
+                                )
+                            },
+                        }
                     )
     except WebSocketDisconnect as exc:
         logger.info("WebSocket disconnect: session=%s code=%s", session_id, exc.code)
         manager.disconnect(session_id, websocket)
     except FileNotFoundError:
-        logger.warning("WebSocket session not found: session=%s data_root=%s", session_id, data_root)
+        logger.warning(
+            "WebSocket session not found: session=%s data_root=%s",
+            session_id,
+            data_root,
+        )
         await websocket.send_json(error_event(ErrorCode.NOT_FOUND, "Session not found"))
         await websocket.close()
     except Exception:  # pragma: no cover - defensive logging

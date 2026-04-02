@@ -18,7 +18,6 @@ from core.providers.base import CompletionResult
 from core.schemas import RollCall, SessionPacket
 from core.schemas.enums import SessionSubstate
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

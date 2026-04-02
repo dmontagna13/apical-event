@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-import pytest_asyncio
 
 from core.context.assembler import ContextBudgetExceeded, assemble_moderator_context
 from core.context.budget import calculate_budget, count_tokens
 from core.context.summarizer import get_or_create_summary, summarize_bundle
-from core.providers.base import CompletionResult, Message, ProviderAdapter, ToolDefinition
+from core.providers.base import CompletionResult, ProviderAdapter
 from core.schemas.constants import (
     CONTEXT_SAFETY_MARGIN_MIN,
     CONTEXT_SAFETY_MARGIN_RATIO,
-    SUMMARY_MAX_TOKENS,
     TOKEN_ESTIMATE_CHARS_PER_TOKEN,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

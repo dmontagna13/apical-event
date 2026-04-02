@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
-from core.journals import init_journal, read_all_bundles, save_state
-from core.journals.session_dir import load_packet, save_packet, save_roll_call
+from core.journals import init_journal, save_state
+from core.journals.session_dir import save_packet, save_roll_call
 from core.providers.base import CompletionResult
 from core.schemas import RollCall, SessionPacket
 from core.schemas.constants import ARCHIVE_FILENAME, CONSENSUS_FILENAME
@@ -18,7 +17,6 @@ from core.schemas.enums import SessionState
 from orchestration.consensus.archive import build_session_archive, write_archive
 from orchestration.consensus.capture import run_consensus_capture
 from orchestration.consensus.validator import validate_consensus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -325,7 +323,12 @@ async def test_run_consensus_capture_retries_on_validation_failure(tmp_path: Pat
         "sections": {},  # Missing all required sections
         "stop_condition_met": True,
         "dissenting_opinions": [],
-        "session_statistics": {"total_turns": 0, "agent_turns": {}, "human_decisions": 0, "duration_minutes": 0},
+        "session_statistics": {
+            "total_turns": 0,
+            "agent_turns": {},
+            "human_decisions": 0,
+            "duration_minutes": 0,
+        },
     }
     good_output = _valid_output(packet)
 
@@ -336,8 +339,20 @@ async def test_run_consensus_capture_retries_on_validation_failure(tmp_path: Pat
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return CompletionResult(text=json.dumps(bad_output), tool_calls=[], usage={}, finish_reason="stop", latency_ms=1)
-            return CompletionResult(text=json.dumps(good_output), tool_calls=[], usage={}, finish_reason="stop", latency_ms=1)
+                return CompletionResult(
+                    text=json.dumps(bad_output),
+                    tool_calls=[],
+                    usage={},
+                    finish_reason="stop",
+                    latency_ms=1,
+                )
+            return CompletionResult(
+                text=json.dumps(good_output),
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
 
     state = {"session_id": "sess_test", "state": SessionState.CONSENSUS.value, "substate": None}
     manager = MagicMock()
@@ -356,7 +371,6 @@ async def test_run_consensus_capture_retries_on_validation_failure(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_run_consensus_capture_writes_warnings_after_max_retries(tmp_path: Path):
     """After CONSENSUS_RETRY_MAX retries still failing, output includes validation_warnings."""
-    from core.schemas.constants import CONSENSUS_RETRY_MAX
 
     session_dir = _make_session_dir(tmp_path)
     packet = _load_packet()
@@ -370,7 +384,12 @@ async def test_run_consensus_capture_writes_warnings_after_max_retries(tmp_path:
         "sections": {},
         "stop_condition_met": True,
         "dissenting_opinions": [],
-        "session_statistics": {"total_turns": 0, "agent_turns": {}, "human_decisions": 0, "duration_minutes": 0},
+        "session_statistics": {
+            "total_turns": 0,
+            "agent_turns": {},
+            "human_decisions": 0,
+            "duration_minutes": 0,
+        },
     }
 
     state = {"session_id": "sess_test", "state": SessionState.CONSENSUS.value, "substate": None}

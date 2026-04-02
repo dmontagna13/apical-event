@@ -32,3 +32,27 @@ def error_event(
     if details:
         payload["details"] = details
     return {"event": "error", "data": payload}
+
+
+def init_dispatch_started(role_ids: list[str]) -> dict:
+    """Return init_dispatch_started event payload."""
+
+    return {"event": "init_dispatch_started", "data": {"role_ids": role_ids}}
+
+
+def init_dispatch_complete(success_count: int, error_count: int) -> dict:
+    """Return init_dispatch_complete event payload."""
+
+    return {
+        "event": "init_dispatch_complete",
+        "data": {"success_count": success_count, "error_count": error_count},
+    }
+
+
+def error_state_entered(message: str, failed_role: str, retry_count: int) -> dict:
+    """Return error_state_entered event payload."""
+
+    return {
+        "event": "error_state_entered",
+        "data": {"message": message, "failed_role": failed_role, "retry_count": retry_count},
+    }

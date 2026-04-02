@@ -140,7 +140,9 @@ export type ClientEvent =
   | { event: "dispatch_approved"; data?: { card_resolutions?: CardResolution[]; quiz_answers?: QuizAnswer[] } }
   | { event: "decision_quiz_resolved"; data: { quiz_id: string; selected_option: string; freeform_text?: string | null } }
   | { event: "trigger_consensus"; data: {} }
-  | { event: "abandon_session"; data: { reason: string } };
+  | { event: "abandon_session"; data: { reason: string } }
+  | { event: "retry_moderator"; data?: {} }
+  | { event: "switch_moderator_provider"; data: { provider: string; model: string } };
 
 export interface CardResolution {
   card_id: string;
@@ -487,6 +489,10 @@ export class SessionWebSocket {
           quiz_answers: event.data?.quiz_answers ?? [],
         },
       };
+    }
+
+    if (event.event === "retry_moderator") {
+      return { event: "retry_moderator", data: {} };
     }
 
     return {

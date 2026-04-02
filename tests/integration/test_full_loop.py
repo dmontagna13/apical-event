@@ -24,7 +24,6 @@ from core.schemas import RollCall, SessionPacket
 from core.schemas.enums import SessionSubstate
 from orchestration.engine.runner import signal_human_gate
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -48,7 +47,7 @@ def _providers(valid_roll_call: RollCall) -> dict[str, ProviderConfig]:
 
 
 def _moderator_adapter():
-    """First complete() call returns a generate_action_cards tool call; subsequent calls return plain text."""
+    """First complete() call returns a generate_action_cards tool call; then plain text."""
     call_count = 0
 
     class _Mock:
@@ -192,9 +191,7 @@ async def test_full_deliberation_loop(
 
         # 5. Approve all pending cards
         pending = state["pending_action_cards"]
-        card_resolutions = [
-            {"card_id": str(c["card_id"]), "action": "APPROVED"} for c in pending
-        ]
+        card_resolutions = [{"card_id": str(c["card_id"]), "action": "APPROVED"} for c in pending]
         delivered = await signal_human_gate(
             session_id,
             {
@@ -227,7 +224,10 @@ async def test_full_deliberation_loop(
     assert len(agent_journal.turns) >= 1
     assert agent_journal.turns[0].approved_prompt == "Analyse the proposed domain boundaries."
     assert agent_journal.turns[0].status == "OK"
-    assert agent_journal.turns[0].agent_response == "Boundary analysis: the domains are well-separated."
+    assert (
+        agent_journal.turns[0].agent_response
+        == "Boundary analysis: the domains are well-separated."
+    )
 
     # chat_history has two moderator entries (first turn + second turn)
     moderator_msgs = [e for e in state.get("chat_history", []) if e["role"] == "moderator"]

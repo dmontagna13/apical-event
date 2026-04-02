@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from .enums import TurnType
+
 
 class AgentTurn(BaseModel):
     """Single agent turn within a dispatch bundle."""
@@ -14,10 +16,28 @@ class AgentTurn(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     session_id: str
     role_id: str
-    bundle_id: str = Field(description="Which dispatch round this turn belongs to")
-    prompt_hash: str = Field(description="SHA-256 of the approved prompt text")
+    turn_type: TurnType = Field(description="INIT | DELIBERATION")
+    bundle_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which dispatch round this turn belongs to. "
+            "None for INIT turns — bundle_001 is created after all init responses arrive. "
+            "bundle_NNN for DELIBERATION turns."
+        ),
+    )
+    prompt_hash: str = Field(
+        description=(
+            "SHA-256 of the exact prompt text sent. "
+            "For INIT: hash of the assembled init prompt. "
+            "For DELIBERATION: hash of the human-approved prompt."
+        )
+    )
     approved_prompt: str = Field(
-        description="The exact text sent, after human approval/modification"
+        description=(
+            "The exact text sent to the provider. "
+            "For INIT: assembled init prompt (deterministic, not human-approved). "
+            "For DELIBERATION: exact text after human approval/modification."
+        )
     )
     agent_response: str = Field(description="The raw output returned by the model")
     status: str = Field(default="OK", description="OK | TIMEOUT | ERROR")

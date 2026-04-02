@@ -98,9 +98,7 @@ def _validate_update_kanban(arguments: dict, session_state: dict) -> list[str]:
         if "question_id" not in update:
             errors.append(f"{prefix}: missing required field 'question_id'")
         elif task_ids and update["question_id"] not in task_ids:
-            errors.append(
-                f"{prefix}: question_id '{update['question_id']}' not found in kanban"
-            )
+            errors.append(f"{prefix}: question_id '{update['question_id']}' not found in kanban")
 
         if "new_status" not in update:
             errors.append(f"{prefix}: missing required field 'new_status'")

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import socket
-from urllib.parse import urlparse
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import Depends
 

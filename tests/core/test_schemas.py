@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+import pytest
+
 from core.schemas import (
     ActionCard,
     ActionCardStatus,
@@ -13,6 +15,7 @@ from core.schemas import (
     AgentResponseBundle,
     AgentTurn,
     BundledResponse,
+    BundleType,
     DecisionQuiz,
     ErrorCode,
     KanbanBoard,
@@ -22,6 +25,7 @@ from core.schemas import (
     RollCall,
     SessionState,
     SessionSubstate,
+    TurnType,
     validate_packet,
 )
 from core.schemas.constants import (
@@ -61,6 +65,7 @@ def test_models_round_trip() -> None:
     turn = AgentTurn(
         session_id="sess_test",
         role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
         bundle_id="bundle_001",
         prompt_hash="abc123",
         approved_prompt="Do the thing",
@@ -77,7 +82,9 @@ def test_models_round_trip() -> None:
         status="OK",
         latency_ms=123,
     )
-    bundle = AgentResponseBundle(bundle_id="bundle_001", responses=[bundled])
+    bundle = AgentResponseBundle(
+        bundle_id="bundle_001", bundle_type=BundleType.DELIBERATION, responses=[bundled]
+    )
     bundle_round = AgentResponseBundle.model_validate(bundle.model_dump(mode="json"))
     assert bundle_round.model_dump(mode="json") == bundle.model_dump(mode="json")
 
@@ -99,6 +106,7 @@ def test_uuid_and_datetime_serialize_to_strings() -> None:
     turn = AgentTurn(
         session_id="sess_test",
         role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
         bundle_id="bundle_001",
         prompt_hash="abc123",
         approved_prompt="Do the thing",
@@ -178,7 +186,7 @@ def test_kanban_from_agenda() -> None:
     ]
     board = KanbanBoard.from_agenda(agenda)
     assert [task.task_id for task in board.tasks] == ["Q-01", "Q-02"]
-    assert all(task.status == KanbanStatus.TO_DISCUSS.value for task in board.tasks)
+    assert all(task.status == KanbanStatus.TO_DISCUSS for task in board.tasks)
 
 
 def test_enum_values() -> None:
@@ -188,14 +196,16 @@ def test_enum_values() -> None:
         "ACTIVE",
         "CONSENSUS",
         "COMPLETED",
+        "COMPLETED_WITH_WARNINGS",
         "ABANDONED",
         "ERROR",
     }
     assert {state.value for state in SessionSubstate} == {
+        "INIT_DISPATCH",
+        "AGENT_AGGREGATION",
         "MODERATOR_TURN",
         "HUMAN_GATE",
         "AGENT_DISPATCH",
-        "AGENT_AGGREGATION",
     }
     assert {state.value for state in MeetingClass} == {
         "DISCOVERY",
@@ -250,3 +260,60 @@ def test_constants_values() -> None:
     assert OUTPUT_DIR == "output"
     assert CONSENSUS_FILENAME == "consensus.json"
     assert ARCHIVE_FILENAME == "session_archive.json"
+
+
+def test_agent_turn_init_bundle_id_optional() -> None:
+    turn = AgentTurn(
+        session_id="sess_test",
+        role_id="RG-FAC",
+        turn_type=TurnType.INIT,
+        bundle_id=None,
+        prompt_hash="abc123",
+        approved_prompt="Init prompt",
+        agent_response="Ready",
+    )
+    assert turn.bundle_id is None
+
+
+def test_agent_turn_deliberation_has_bundle_id() -> None:
+    turn = AgentTurn(
+        session_id="sess_test",
+        role_id="RG-FAC",
+        turn_type=TurnType.DELIBERATION,
+        bundle_id="bundle_001",
+        prompt_hash="abc123",
+        approved_prompt="Do the thing",
+        agent_response="Done",
+    )
+    assert turn.bundle_id == "bundle_001"
+
+
+def test_bundle_type_required() -> None:
+    with pytest.raises(Exception):
+        AgentResponseBundle(
+            bundle_id="bundle_001",
+            responses=[
+                BundledResponse(
+                    role_id="RG-FAC",
+                    turn_id="00000000-0000-0000-0000-000000000000",
+                    response_text="ok",
+                    status="OK",
+                    latency_ms=1,
+                )
+            ],
+        )
+
+
+def test_kanban_status_rejects_invalid() -> None:
+    from core.schemas.kanban import KanbanTask
+
+    with pytest.raises(Exception):
+        KanbanTask(task_id="Q-01", title="Bad", status="BOGUS")
+
+
+def test_init_dispatch_substate_valid() -> None:
+    assert SessionSubstate("INIT_DISPATCH") == SessionSubstate.INIT_DISPATCH
+
+
+def test_completed_with_warnings_state_valid() -> None:
+    assert SessionState("COMPLETED_WITH_WARNINGS") == SessionState.COMPLETED_WITH_WARNINGS

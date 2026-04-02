@@ -8,7 +8,6 @@ from pathlib import Path
 
 from api.websocket.manager import ConnectionManager
 from core.config import ProviderConfig, resolve_api_key
-from core.journals import read_all_bundles, save_state
 from core.prompt_assembly.moderator_prompt import assemble_moderator_prompt
 from core.providers.base import Message, ProviderAdapter, ProviderError
 from core.providers.factory import get_adapter
@@ -60,7 +59,10 @@ async def run_moderator_turn(
     # Enrich state with role context for tool validation
     state.setdefault("moderator_role_id", moderator_role.role_id)
     state.setdefault("all_role_ids", [r.role_id for r in packet.roles])
-    state.setdefault("non_moderator_role_ids", [r.role_id for r in packet.roles if not r.is_moderator])
+    state.setdefault(
+        "non_moderator_role_ids",
+        [r.role_id for r in packet.roles if not r.is_moderator],
+    )
 
     # Build the moderator system prompt
     tools = get_tool_definitions()
@@ -99,23 +101,30 @@ async def run_moderator_turn(
 
     if result is None:
         # All retries exhausted — transition to ERROR
-        logger.error("Moderator API failed after %d retries for session %s", MODERATOR_RETRY_MAX, session_id)
+        logger.error(
+            "Moderator API failed after %d retries for session %s",
+            MODERATOR_RETRY_MAX,
+            session_id,
+        )
         state["state"] = SessionState.ERROR.value
         state["substate"] = None
         state["error"] = "Moderator API failed after maximum retries"
         await manager.broadcast(
             session_id,
-            {"event": "error", "data": {"code": ErrorCode.PROVIDER_ERROR.value,
-                                         "message": "Moderator failed after maximum retries",
-                                         "recoverable": False}},
+            {
+                "event": "error",
+                "data": {
+                    "code": ErrorCode.PROVIDER_ERROR.value,
+                    "message": "Moderator failed after maximum retries",
+                    "recoverable": False,
+                },
+            },
         )
         return state
 
     # Store the moderator's text in chat_history
     if result.text:
-        state.setdefault("chat_history", []).append(
-            {"role": "moderator", "content": result.text}
-        )
+        state.setdefault("chat_history", []).append({"role": "moderator", "content": result.text})
         await manager.broadcast(
             session_id,
             {"event": "moderator_turn", "data": {"text": result.text}},
@@ -139,18 +148,30 @@ async def run_moderator_turn(
             )
             retry_prompt = build_retry_prompt(tool_call.name, tool_call.arguments, errors)
 
-            tool_messages_objs = [Message(role=m["role"], content=m["content"]) for m in tool_messages]
+            tool_messages_objs = [
+                Message(role=m["role"], content=m["content"]) for m in tool_messages
+            ]
             retry_msg = Message(role="user", content=retry_prompt)
             tool_messages_objs.append(retry_msg)
             tool_messages.append({"role": "user", "content": retry_prompt})
 
-            retry_result = await _call_once(adapter, tool_messages_objs, model, system_prompt, tools)
+            retry_result = await _call_once(
+                adapter,
+                tool_messages_objs,
+                model,
+                system_prompt,
+                tools,
+            )
             if retry_result is None:
                 errors = ["Provider error during retry"]
                 break
 
             tool_call = retry_result.tool_calls[0] if retry_result.tool_calls else tool_call
-            errors = validate_tool_call(tool_call.name, tool_call.arguments, state) if retry_result.tool_calls else []
+            errors = (
+                validate_tool_call(tool_call.name, tool_call.arguments, state)
+                if retry_result.tool_calls
+                else []
+            )
             tool_messages.append({"role": "assistant", "content": retry_result.text or ""})
             retry_count += 1
 
@@ -159,8 +180,7 @@ async def run_moderator_turn(
             logger.warning("Dropping tool call '%s' after %d retries", tool_call.name, retry_count)
             await manager.broadcast(
                 session_id,
-                {"event": "tool_call_dropped",
-                 "data": {"tool": tool_call.name, "errors": errors}},
+                {"event": "tool_call_dropped", "data": {"tool": tool_call.name, "errors": errors}},
             )
             continue
 
@@ -189,9 +209,7 @@ async def run_moderator_turn(
             for tool_call in retry_result.tool_calls:
                 errors = validate_tool_call(tool_call.name, tool_call.arguments, state)
                 if errors:
-                    logger.warning(
-                        "Tool call '%s' invalid on retry: %s", tool_call.name, errors
-                    )
+                    logger.warning("Tool call '%s' invalid on retry: %s", tool_call.name, errors)
                     continue
                 tool_result = handle_tool_call(tool_call.name, tool_call.arguments, state)
                 for ws_event in tool_result.ws_events:
@@ -209,14 +227,17 @@ async def run_moderator_turn(
     # Broadcast full state sync so client reflects new kanban/cards/quizzes
     await manager.broadcast(
         session_id,
-        {"event": "state_sync", "data": {
-            "kanban": state.get("kanban"),
-            "pending_actions": state.get("pending_action_cards", []),
-            "pending_quizzes": state.get("pending_quizzes", []),
-            "chat_history": state.get("chat_history", []),
-            "session_state": state.get("state"),
-            "substate": state.get("substate"),
-        }},
+        {
+            "event": "state_sync",
+            "data": {
+                "kanban": state.get("kanban"),
+                "pending_actions": state.get("pending_action_cards", []),
+                "pending_quizzes": state.get("pending_quizzes", []),
+                "chat_history": state.get("chat_history", []),
+                "session_state": state.get("state"),
+                "substate": state.get("substate"),
+            },
+        },
     )
 
     return state
@@ -310,7 +331,10 @@ def _format_tool_definitions(tools: list) -> str:
 
     import json
 
-    return json.dumps([{"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools], indent=2)
+    return json.dumps(
+        [{"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools],
+        indent=2,
+    )
 
 
 def _format_kanban(kanban: dict) -> str:
@@ -321,7 +345,10 @@ def _format_kanban(kanban: dict) -> str:
         return "(no tasks)"
     lines = ["| task_id | status | title |", "|---------|--------|-------|"]
     for task in tasks:
-        lines.append(f"| {task.get('task_id', '')} | {task.get('status', '')} | {task.get('title', '')} |")
+        lines.append(
+            f"| {task.get('task_id', '')} | {task.get('status', '')} | "
+            f"{task.get('title', '')} |"
+        )
     return "\n".join(lines)
 
 

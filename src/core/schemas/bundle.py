@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from .enums import BundleType
+
 
 class BundledResponse(BaseModel):
     """Single agent response within a bundle."""
@@ -22,5 +24,6 @@ class AgentResponseBundle(BaseModel):
     """Bundle of responses for a dispatch round."""
 
     bundle_id: str = Field(description="Monotonically increasing: bundle_001, bundle_002, ...")
+    bundle_type: BundleType = Field(description="INIT | DELIBERATION")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     responses: list[BundledResponse]

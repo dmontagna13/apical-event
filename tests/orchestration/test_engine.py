@@ -12,20 +12,18 @@ import pytest
 
 from core.journals import (
     init_journal,
-    load_state,
     read_all_bundles,
     read_journal,
     save_state,
 )
-from core.providers.base import CompletionResult, Message, ToolCall
+from core.providers.base import CompletionResult, ToolCall
 from core.schemas import KanbanBoard, SessionPacket
 from core.schemas.enums import SessionState, SessionSubstate
 from orchestration.engine.nodes.aggregation import run_agent_aggregation
 from orchestration.engine.nodes.dispatch import run_agent_dispatch
 from orchestration.engine.nodes.human_gate import process_gate_event
 from orchestration.engine.nodes.moderator import run_moderator_turn
-from orchestration.engine.runner import signal_human_gate, start_session
-
+from orchestration.engine.runner import signal_human_gate
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -37,8 +35,6 @@ def _make_state(session_dir: Path, session_id: str = "sess_test") -> dict:
 
     Also initialises journals for all roles (mirrors sessions.py init flow).
     """
-
-    from core.journals import init_journal
 
     packet_path = Path(__file__).parent.parent / "fixtures" / "valid_packet.json"
     packet = SessionPacket.model_validate(json.loads(packet_path.read_text()))
@@ -182,7 +178,9 @@ def test_process_gate_all_denied_routes_to_moderator():
     }
     event = {
         "type": "dispatch_approved",
-        "card_resolutions": [{"card_id": card_id, "action": "DENIED", "denial_reason": "Off topic"}],
+        "card_resolutions": [
+            {"card_id": card_id, "action": "DENIED", "denial_reason": "Off topic"}
+        ],
         "quiz_answers": [],
     }
     updated, next_sub = process_gate_event(state, event)
@@ -232,7 +230,7 @@ def test_process_gate_modified_card():
 async def test_dispatch_node_writes_journals(tmp_session_dir, valid_packet, valid_roll_call):
     """Dispatch with mocked providers writes journal entries."""
 
-    from core.journals import save_roll_call, save_state
+    from core.journals import save_roll_call
 
     save_roll_call(tmp_session_dir, valid_roll_call)
 
@@ -258,9 +256,7 @@ async def test_dispatch_node_writes_journals(tmp_session_dir, valid_packet, vali
 
     with patch("orchestration.engine.nodes.dispatch.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _mock_provider("Agent analysis result.")
-        result_state = await run_agent_dispatch(
-            tmp_session_dir, state, manager, providers_config
-        )
+        result_state = await run_agent_dispatch(tmp_session_dir, state, manager, providers_config)
 
     assert result_state["substate"] == SessionSubstate.AGENT_AGGREGATION.value
     assert len(result_state["dispatch_results"]) == 1
@@ -362,8 +358,14 @@ async def test_aggregation_clears_dispatch_state(tmp_session_dir):
     state = _make_state(tmp_session_dir)
     state["current_bundle_id"] = "bundle_001"
     state["dispatch_results"] = [
-        {"role_id": "RG-CRIT", "turn_id": str(uuid4()), "response_text": "R", "status": "OK",
-         "error_message": None, "latency_ms": 0}
+        {
+            "role_id": "RG-CRIT",
+            "turn_id": str(uuid4()),
+            "response_text": "R",
+            "status": "OK",
+            "error_message": None,
+            "latency_ms": 0,
+        }
     ]
     state["approved_cards"] = [{"card_id": str(uuid4()), "status": "APPROVED"}]
 
@@ -384,7 +386,7 @@ async def test_aggregation_clears_dispatch_state(tmp_session_dir):
 async def test_moderator_turn_text_response(tmp_session_dir, valid_packet, valid_roll_call):
     """Moderator turn with text-only response updates chat_history and substate."""
 
-    from core.journals import save_roll_call, save_state
+    from core.journals import save_roll_call
 
     save_roll_call(tmp_session_dir, valid_roll_call)
 
@@ -397,9 +399,7 @@ async def test_moderator_turn_text_response(tmp_session_dir, valid_packet, valid
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _mock_provider("Hello from moderator.")
-        result_state = await run_moderator_turn(
-            tmp_session_dir, state, manager, providers_config
-        )
+        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
 
     assert result_state["substate"] == SessionSubstate.HUMAN_GATE.value
     chat = result_state["chat_history"]
@@ -410,7 +410,7 @@ async def test_moderator_turn_text_response(tmp_session_dir, valid_packet, valid
 async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, valid_roll_call):
     """Moderator turn with valid tool calls updates pending_action_cards."""
 
-    from core.journals import save_roll_call, save_state
+    from core.journals import save_roll_call
 
     save_roll_call(tmp_session_dir, valid_roll_call)
 
@@ -436,12 +436,8 @@ async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, val
     )
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
-        mock_get_adapter.return_value = _mock_provider(
-            "Here are the action cards.", [tool_call]
-        )
-        result_state = await run_moderator_turn(
-            tmp_session_dir, state, manager, providers_config
-        )
+        mock_get_adapter.return_value = _mock_provider("Here are the action cards.", [tool_call])
+        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
 
     assert len(result_state["pending_action_cards"]) == 1
     assert result_state["pending_action_cards"][0]["target_role_id"] == non_mod_id
@@ -451,7 +447,7 @@ async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, val
 async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_roll_call):
     """Malformed tool call triggers retry prompt (up to TOOL_CALL_RETRY_MAX)."""
 
-    from core.journals import save_roll_call, save_state
+    from core.journals import save_roll_call
 
     save_roll_call(tmp_session_dir, valid_roll_call)
 
@@ -495,9 +491,7 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _CountingProvider()
-        result_state = await run_moderator_turn(
-            tmp_session_dir, state, manager, providers_config
-        )
+        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
 
     # 1 initial call + up to TOOL_CALL_RETRY_MAX retries — card should be dropped
     assert len(result_state["pending_action_cards"]) == 0
@@ -510,7 +504,7 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
 async def test_moderator_turn_api_failure_sets_error(tmp_session_dir, valid_roll_call):
     """Provider failure after max retries transitions session to ERROR."""
 
-    from core.journals import save_roll_call, save_state
+    from core.journals import save_roll_call
     from core.providers.base import ProviderError
 
     save_roll_call(tmp_session_dir, valid_roll_call)
@@ -534,9 +528,7 @@ async def test_moderator_turn_api_failure_sets_error(tmp_session_dir, valid_roll
         patch("orchestration.engine.nodes.moderator.MODERATOR_RETRY_BACKOFF", [0, 0, 0]),
     ):
         mock_get_adapter.return_value = _FailingProvider()
-        result_state = await run_moderator_turn(
-            tmp_session_dir, state, manager, providers_config
-        )
+        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
 
     assert result_state["state"] == SessionState.ERROR.value
 

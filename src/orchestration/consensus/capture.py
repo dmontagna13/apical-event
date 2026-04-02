@@ -10,7 +10,7 @@ from pathlib import Path
 
 from api.websocket.manager import ConnectionManager
 from core.config import ProviderConfig, resolve_api_key
-from core.journals import read_all_journals, save_state
+from core.journals import read_all_journals
 from core.journals.session_dir import load_packet, load_roll_call
 from core.prompt_assembly.consensus_prompt import assemble_consensus_prompt
 from core.providers.base import Message, ProviderAdapter
@@ -82,16 +82,22 @@ async def run_consensus_capture(
         except Exception as exc:  # noqa: BLE001
             logger.error("Consensus LLM call failed (attempt %d): %s", attempt + 1, exc)
             if attempt < CONSENSUS_RETRY_MAX:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
                 continue
             state["state"] = SessionState.ERROR.value
-            state["error"] = f"Consensus capture failed after {CONSENSUS_RETRY_MAX + 1} attempts: {exc}"
+            state["error"] = (
+                "Consensus capture failed after " f"{CONSENSUS_RETRY_MAX + 1} attempts: {exc}"
+            )
             return state
 
         try:
             output = json.loads(result.text)
         except json.JSONDecodeError as exc:
-            logger.warning("Consensus response is not valid JSON (attempt %d): %s", attempt + 1, exc)
+            logger.warning(
+                "Consensus response is not valid JSON (attempt %d): %s",
+                attempt + 1,
+                exc,
+            )
             output = None
             if attempt < CONSENSUS_RETRY_MAX:
                 retry_msg = (
@@ -115,9 +121,7 @@ async def run_consensus_capture(
             break  # All hard constraints satisfied
 
         if attempt < CONSENSUS_RETRY_MAX:
-            logger.warning(
-                "Consensus validation failed (attempt %d): %s", attempt + 1, hard_errors
-            )
+            logger.warning("Consensus validation failed (attempt %d): %s", attempt + 1, hard_errors)
             error_list = "\n".join(f"- {e}" for e in hard_errors)
             retry_msg = (
                 "Your consensus output failed validation. Please fix these errors:\n"

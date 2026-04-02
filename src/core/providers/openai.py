@@ -130,7 +130,10 @@ class OpenAIAdapter:
 
         url = f"{self.base_url}/models"
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        async with httpx.AsyncClient(timeout=AGENT_TIMEOUT_SECONDS, transport=self.transport) as client:
+        async with httpx.AsyncClient(
+            timeout=AGENT_TIMEOUT_SECONDS,
+            transport=self.transport,
+        ) as client:
             try:
                 response = await client.get(url, headers=headers)
             except httpx.TimeoutException as exc:
@@ -171,6 +174,11 @@ class OpenAIAdapter:
                 raise ProviderError(self.provider_name, None, str(exc), model=model) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.provider_name, response.status_code, response.text, model=model)
+            raise ProviderError(
+                self.provider_name,
+                response.status_code,
+                response.text,
+                model=model,
+            )
 
         return response

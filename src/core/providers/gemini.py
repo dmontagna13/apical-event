@@ -144,6 +144,11 @@ class GeminiAdapter:
                 raise ProviderError(self.provider_name, None, str(exc), model=model) from exc
 
         if response.status_code >= 400:
-            raise ProviderError(self.provider_name, response.status_code, response.text, model=model)
+            raise ProviderError(
+                self.provider_name,
+                response.status_code,
+                response.text,
+                model=model,
+            )
 
         return response

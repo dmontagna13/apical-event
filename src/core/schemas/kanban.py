@@ -14,9 +14,7 @@ class KanbanTask(BaseModel):
 
     task_id: str = Field(description="Maps to agenda question_id")
     title: str
-    status: str = Field(
-        description="TO_DISCUSS | AGENT_DELIBERATION | PENDING_HUMAN_DECISION | RESOLVED"
-    )
+    status: KanbanStatus = Field(default=KanbanStatus.TO_DISCUSS)
     notes: str = ""
     linked_card_id: Optional[UUID] = None
     linked_quiz_id: Optional[UUID] = None
@@ -35,7 +33,7 @@ class KanbanBoard(BaseModel):
             KanbanTask(
                 task_id=item.question_id,
                 title=item.text,
-                status=KanbanStatus.TO_DISCUSS.value,
+                status=KanbanStatus.TO_DISCUSS,
             )
             for item in agenda
         ]

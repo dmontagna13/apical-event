@@ -15,7 +15,6 @@ from orchestration.tools.handlers import (
 from orchestration.tools.retry import build_retry_prompt
 from orchestration.tools.validation import validate_tool_call
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -202,11 +201,7 @@ def test_handle_tool_call_unknown_returns_failure(base_state):
 
 
 def test_handle_tool_call_dispatches_correctly(base_state):
-    args = {
-        "cards": [
-            {"target_role_id": "RG-CRIT", "prompt_text": "P", "context_note": "N"}
-        ]
-    }
+    args = {"cards": [{"target_role_id": "RG-CRIT", "prompt_text": "P", "context_note": "N"}]}
     result = handle_tool_call("generate_action_cards", args, base_state)
     assert result.success is True
     assert len(base_state["pending_action_cards"]) == 1
@@ -325,7 +320,11 @@ def test_build_retry_prompt_includes_tool_name():
 
 
 def test_build_retry_prompt_includes_arguments():
-    prompt = build_retry_prompt("update_kanban", {"updates": [{"question_id": "Q-99"}]}, ["Q-99 not found"])
+    prompt = build_retry_prompt(
+        "update_kanban",
+        {"updates": [{"question_id": "Q-99"}]},
+        ["Q-99 not found"],
+    )
     assert "Q-99" in prompt
 
 
@@ -344,11 +343,7 @@ def test_build_retry_prompt_includes_errors():
 def test_handlers_return_events_not_broadcast(base_state):
     """Confirm handlers return ws_events list rather than calling any WebSocket."""
 
-    args = {
-        "cards": [
-            {"target_role_id": "RG-CRIT", "prompt_text": "P", "context_note": "N"}
-        ]
-    }
+    args = {"cards": [{"target_role_id": "RG-CRIT", "prompt_text": "P", "context_note": "N"}]}
     result = handle_tool_call("generate_action_cards", args, base_state)
     assert isinstance(result, ToolResult)
     assert isinstance(result.ws_events, list)
