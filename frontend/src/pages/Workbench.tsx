@@ -272,8 +272,6 @@ export function Workbench(): JSX.Element {
       return;
     }
 
-    socket.connect(sessionId);
-
     const handleStateSync = (data: {
       chat_history: ChatMessage[];
       kanban: KanbanBoard | null;
@@ -409,6 +407,8 @@ export function Workbench(): JSX.Element {
     socket.on("human_message_queued", handleQueued);
     socket.on("connection_lost", handleConnectionLost);
     socket.on("connection_restored", handleConnectionRestored);
+
+    socket.connect(sessionId);
 
     return () => {
       socket.off("state_sync", handleStateSync);
