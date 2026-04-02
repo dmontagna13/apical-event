@@ -188,33 +188,6 @@ async def run_moderator_turn(
         for ws_event in tool_result.ws_events:
             await manager.broadcast(session_id, ws_event)
 
-    # If moderator didn't create any actionable work, retry once with explicit instruction.
-    if not state.get("pending_action_cards") and not state.get("pending_quizzes"):
-        logger.warning(
-            "Moderator produced no action cards/quizzes for session %s — retrying tool call",
-            session_id,
-        )
-        retry_prompt = (
-            "You must call generate_action_cards now. Create at least one action card for each "
-            f"background agent ({', '.join(state['non_moderator_role_ids'])}). "
-            "Use the agenda questions to focus the prompts. "
-            "Return tool calls only."
-        )
-        tool_messages_objs = [Message(role=m["role"], content=m["content"]) for m in tool_messages]
-        tool_messages_objs.append(Message(role="user", content=retry_prompt))
-        tool_messages.append({"role": "user", "content": retry_prompt})
-
-        retry_result = await _call_once(adapter, tool_messages_objs, model, system_prompt, tools)
-        if retry_result is not None:
-            for tool_call in retry_result.tool_calls:
-                errors = validate_tool_call(tool_call.name, tool_call.arguments, state)
-                if errors:
-                    logger.warning("Tool call '%s' invalid on retry: %s", tool_call.name, errors)
-                    continue
-                tool_result = handle_tool_call(tool_call.name, tool_call.arguments, state)
-                for ws_event in tool_result.ws_events:
-                    await manager.broadcast(session_id, ws_event)
-
     # Move queued human messages to chat history (now consumed)
     if queued:
         for msg in queued:
