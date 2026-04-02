@@ -239,14 +239,19 @@ async def submit_roll_call(
 
     state = _read_json(session_dir / "state.json")
     state["state"] = SessionState.ACTIVE.value
-    state["substate"] = SessionSubstate.MODERATOR_TURN.value
+    state["substate"] = SessionSubstate.INIT_DISPATCH.value
     save_state(session_dir, state)
 
     # Trigger first moderator turn as a background task (TASK-10)
     from api.websocket.handler import manager as ws_manager
     from orchestration.engine.runner import start_session as _start_session
 
-    background_tasks.add_task(_start_session, session_dir, data_root, ws_manager)
+    background_tasks.add_task(
+        _start_session,
+        session_id,
+        data_root,
+        ws_manager.broadcast,
+    )
 
     return {"ok": True, "state": SessionState.ACTIVE.value}
 

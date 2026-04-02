@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -115,10 +116,11 @@ def test_roll_call_transition(tmp_path: Path, valid_packet: SessionPacket, valid
         json=valid_packet.model_dump(by_alias=True, mode="json"),
     )
     session_id = init.json()["session_id"]
-    response = client.post(
-        f"/api/sessions/{session_id}/roll-call",
-        json=valid_roll_call.model_dump(mode="json"),
-    )
+    with patch("orchestration.engine.runner.start_session", new=AsyncMock()):
+        response = client.post(
+            f"/api/sessions/{session_id}/roll-call",
+            json=valid_roll_call.model_dump(mode="json"),
+        )
     assert response.status_code == 200
     state = client.get(f"/api/sessions/{session_id}/state").json()
     assert state["state"] == "ACTIVE"

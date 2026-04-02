@@ -8,6 +8,11 @@ owns the asyncio.Queue and calls process_gate_event() once an event arrives.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+
+from core.journals import save_state
+from core.schemas.enums import SessionState, SessionSubstate
+from orchestration.engine.state import RUNTIME_KEY, strip_runtime
 
 
 def process_gate_event(state: dict, event: dict) -> tuple[dict, str]:
@@ -116,8 +121,28 @@ def _handle_dispatch_approved(state: dict, event: dict) -> tuple[dict, str]:
     return state, "MODERATOR_TURN"
 
 
-# Stub for LangGraph node signature (used by graph.py for topology definition only)
 async def human_gate_node(state: dict) -> dict:
-    """LangGraph-compatible stub.  Actual gate logic lives in runner._wait_human_gate."""
+    """Await a human gate event, update state, and return the new state."""
+
+    runtime = state.get(RUNTIME_KEY, {})
+    queue = runtime.get("human_queue")
+    if queue is None:
+        return state
+    event = await queue.get()
+    updated_state, _ = process_gate_event(state, event)
+
+    session_dir = Path(updated_state["session_dir"])
+    save_state(session_dir, strip_runtime(updated_state))
+    return updated_state
+
+
+def route_after_human_gate(state: dict) -> str:
+    """Return the next node name after HUMAN_GATE based on state."""
+
+    if state.get("state") == SessionState.CONSENSUS.value:
+        return "consensus"
+    if state.get("substate") == SessionSubstate.AGENT_DISPATCH.value:
+        return "agent_dispatch"
+    return "moderator_turn"
 
     return state

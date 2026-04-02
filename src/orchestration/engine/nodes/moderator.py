@@ -5,18 +5,20 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import Awaitable, Callable
+from uuid import uuid4
 
-from api.websocket.manager import ConnectionManager
-from core.config import ProviderConfig, resolve_api_key
+from core.config import ProviderConfig, load_providers, resolve_api_key
+from core.journals import append_turn, save_state
 from core.prompt_assembly.moderator_prompt import assemble_moderator_prompt
 from core.providers.base import Message, ProviderAdapter, ProviderError
 from core.providers.factory import get_adapter
-from core.schemas import RollCall, SessionPacket
+from core.schemas import AgentTurn, RollCall, SessionPacket
 from core.schemas.constants import MODERATOR_RETRY_BACKOFF, MODERATOR_RETRY_MAX, TOOL_CALL_RETRY_MAX
-from core.schemas.enums import ErrorCode, SessionState, SessionSubstate
+from core.schemas.enums import ErrorCode, SessionState, SessionSubstate, TurnType
+from orchestration.engine.state import RUNTIME_KEY, EngineStateError, strip_runtime
 from orchestration.tools.definitions import get_tool_definitions
 from orchestration.tools.handlers import handle_tool_call
-from orchestration.tools.retry import build_retry_prompt
 from orchestration.tools.validation import validate_tool_call
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 async def run_moderator_turn(
     session_dir: Path,
     state: dict,
-    manager: ConnectionManager,
+    broadcast_fn: Callable[[str, dict], Awaitable[None]],
     providers_config: dict[str, ProviderConfig],
 ) -> dict:
     """Run one Moderator LLM turn: assemble context, call provider, execute tools.
@@ -36,6 +38,12 @@ async def run_moderator_turn(
     On unrecoverable provider failure (after MODERATOR_RETRY_MAX retries) the
     session state is set to ERROR and the updated state is returned.
     """
+
+    if not state.get("latest_bundle"):
+        raise EngineStateError(
+            "moderator_turn_node entered without a bundle in state. "
+            "This is a graph routing bug. Check graph entry point and aggregation output."
+        )
 
     session_id = state["session_id"]
     packet = _load_packet(session_dir)
@@ -95,8 +103,12 @@ async def run_moderator_turn(
             moderator_messages.append({"role": "user", "content": queued_text})
 
     messages = [Message(role=m["role"], content=m["content"]) for m in moderator_messages]
+    approved_prompt = next(
+        (msg["content"] for msg in reversed(moderator_messages) if msg["role"] == "user"),
+        "",
+    )
 
-    # Call the provider with retry on errors
+    # Call the provider with backoff on errors
     result = await _call_with_backoff(adapter, messages, model, system_prompt, tools, session_id)
 
     if result is None:
@@ -109,7 +121,7 @@ async def run_moderator_turn(
         state["state"] = SessionState.ERROR.value
         state["substate"] = None
         state["error"] = "Moderator API failed after maximum retries"
-        await manager.broadcast(
+        await broadcast_fn(
             session_id,
             {
                 "event": "error",
@@ -122,10 +134,31 @@ async def run_moderator_turn(
         )
         return state
 
+    latest_bundle = state.get("latest_bundle")
+    bundle_id = latest_bundle.get("bundle_id") if isinstance(latest_bundle, dict) else None
+    moderator_turn = AgentTurn(
+        turn_id=uuid4(),
+        session_id=session_id,
+        role_id=moderator_role.role_id,
+        turn_type=TurnType.DELIBERATION,
+        bundle_id=bundle_id,
+        prompt_hash="",
+        approved_prompt=approved_prompt,
+        agent_response=result.text or "",
+        status="OK",
+        error_message=None,
+        metadata={
+            **result.usage,
+            "latency_ms": result.latency_ms,
+            "finish_reason": result.finish_reason,
+        },
+    )
+    append_turn(session_dir, moderator_role.role_id, moderator_turn)
+
     # Store the moderator's text in chat_history
     if result.text:
         state.setdefault("chat_history", []).append({"role": "moderator", "content": result.text})
-        await manager.broadcast(
+        await broadcast_fn(
             session_id,
             {"event": "moderator_turn", "data": {"text": result.text}},
         )
@@ -133,7 +166,7 @@ async def run_moderator_turn(
     # Update moderator conversation history
     moderator_messages.append({"role": "assistant", "content": result.text or ""})
 
-    # Process tool calls (with per-tool retry on validation failure)
+    # Process tool calls (with per-tool correction attempts on validation failure)
     # Keep tool_messages as plain dicts throughout for consistent subscripting
     tool_messages = [{"role": m.role, "content": m.content} for m in messages]
     tool_messages.append({"role": "assistant", "content": result.text or ""})
@@ -141,44 +174,55 @@ async def run_moderator_turn(
     for tool_call in result.tool_calls:
         errors = validate_tool_call(tool_call.name, tool_call.arguments, state)
 
-        retry_count = 0
-        while errors and retry_count < TOOL_CALL_RETRY_MAX:
+        attempt_count = 0
+        while errors and attempt_count < TOOL_CALL_RETRY_MAX:
             logger.warning(
-                "Tool call '%s' invalid (attempt %d): %s", tool_call.name, retry_count + 1, errors
+                "Tool call '%s' invalid (attempt %d): %s",
+                tool_call.name,
+                attempt_count + 1,
+                errors,
             )
-            retry_prompt = build_retry_prompt(tool_call.name, tool_call.arguments, errors)
+            attempt_prompt = _build_tool_call_correction_prompt(
+                tool_call.name,
+                tool_call.arguments,
+                errors,
+            )
 
             tool_messages_objs = [
                 Message(role=m["role"], content=m["content"]) for m in tool_messages
             ]
-            retry_msg = Message(role="user", content=retry_prompt)
-            tool_messages_objs.append(retry_msg)
-            tool_messages.append({"role": "user", "content": retry_prompt})
+            attempt_msg = Message(role="user", content=attempt_prompt)
+            tool_messages_objs.append(attempt_msg)
+            tool_messages.append({"role": "user", "content": attempt_prompt})
 
-            retry_result = await _call_once(
+            attempt_result = await _call_once(
                 adapter,
                 tool_messages_objs,
                 model,
                 system_prompt,
                 tools,
             )
-            if retry_result is None:
-                errors = ["Provider error during retry"]
+            if attempt_result is None:
+                errors = ["Provider error during tool correction attempt"]
                 break
 
-            tool_call = retry_result.tool_calls[0] if retry_result.tool_calls else tool_call
+            tool_call = attempt_result.tool_calls[0] if attempt_result.tool_calls else tool_call
             errors = (
                 validate_tool_call(tool_call.name, tool_call.arguments, state)
-                if retry_result.tool_calls
+                if attempt_result.tool_calls
                 else []
             )
-            tool_messages.append({"role": "assistant", "content": retry_result.text or ""})
-            retry_count += 1
+            tool_messages.append({"role": "assistant", "content": attempt_result.text or ""})
+            attempt_count += 1
 
         if errors:
             # Max retries exhausted — notify human
-            logger.warning("Dropping tool call '%s' after %d retries", tool_call.name, retry_count)
-            await manager.broadcast(
+            logger.warning(
+                "Dropping tool call '%s' after %d attempts",
+                tool_call.name,
+                attempt_count,
+            )
+            await broadcast_fn(
                 session_id,
                 {"event": "tool_call_dropped", "data": {"tool": tool_call.name, "errors": errors}},
             )
@@ -186,7 +230,7 @@ async def run_moderator_turn(
 
         tool_result = handle_tool_call(tool_call.name, tool_call.arguments, state)
         for ws_event in tool_result.ws_events:
-            await manager.broadcast(session_id, ws_event)
+            await broadcast_fn(session_id, ws_event)
 
     # Move queued human messages to chat history (now consumed)
     if queued:
@@ -198,7 +242,7 @@ async def run_moderator_turn(
     state["substate"] = SessionSubstate.HUMAN_GATE.value
 
     # Broadcast full state sync so client reflects new kanban/cards/quizzes
-    await manager.broadcast(
+    await broadcast_fn(
         session_id,
         {
             "event": "state_sync",
@@ -240,7 +284,11 @@ async def _call_with_backoff(
             return result
         if attempt < MODERATOR_RETRY_MAX - 1:
             wait = MODERATOR_RETRY_BACKOFF[attempt]
-            logger.warning("Moderator call failed (attempt %d), retrying in %ds", attempt + 1, wait)
+            logger.warning(
+                "Moderator call failed (attempt %d), next attempt in %ds",
+                attempt + 1,
+                wait,
+            )
             await asyncio.sleep(wait)
         else:
             logger.error("Moderator call failed after %d attempts", MODERATOR_RETRY_MAX)
@@ -310,6 +358,25 @@ def _format_tool_definitions(tools: list) -> str:
     )
 
 
+def _build_tool_call_correction_prompt(
+    tool_name: str,
+    arguments: dict,
+    errors: list[str],
+) -> str:
+    """Return a correction prompt for an invalid tool call."""
+
+    import json
+
+    args_str = json.dumps(arguments, indent=2, default=str)
+    errors_str = "\n".join(f"- {error}" for error in errors)
+    return (
+        f"Your last tool call to '{tool_name}' was invalid. "
+        "Please correct the parameters and submit a new tool call.\n\n"
+        f"Invalid arguments:\n{args_str}\n\n"
+        f"Errors:\n{errors_str}"
+    )
+
+
 def _format_kanban(kanban: dict) -> str:
     """Render kanban board as a human-readable table."""
 
@@ -327,6 +394,29 @@ def _format_kanban(kanban: dict) -> str:
 
 # LangGraph-compatible stub for graph.py topology definition
 async def moderator_turn_node(state: dict) -> dict:
-    """LangGraph stub.  Actual moderator logic requires injected dependencies — see runner.py."""
+    """LangGraph node: execute moderator turn using runtime dependencies."""
 
-    return state
+    if not state.get("latest_bundle"):
+        raise EngineStateError(
+            "moderator_turn_node entered without a bundle in state. "
+            "This is a graph routing bug. Check graph entry point and aggregation output."
+        )
+
+    runtime = state.get(RUNTIME_KEY, {})
+    broadcast_fn = runtime.get("broadcast") or _noop_broadcast
+    data_root = runtime.get("data_root")
+
+    session_dir = Path(state["session_dir"])
+    providers_config = runtime.get("providers_config")
+    if providers_config is None:
+        if data_root is None:
+            raise EngineStateError("moderator_turn_node missing data_root for provider lookup.")
+        providers_config = load_providers(Path(data_root))
+
+    updated_state = await run_moderator_turn(session_dir, state, broadcast_fn, providers_config)
+    save_state(session_dir, strip_runtime(updated_state))
+    return updated_state
+
+
+async def _noop_broadcast(session_id: str, event: dict) -> None:
+    return None

@@ -6,17 +6,18 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Awaitable, Callable
 from uuid import uuid4
 
-from api.websocket.manager import ConnectionManager
-from core.config import ProviderConfig, resolve_api_key
-from core.journals import append_turn, next_bundle_id, read_journal
+from core.config import ProviderConfig, load_providers, resolve_api_key
+from core.journals import append_turn, next_bundle_id, read_journal, save_state
 from core.prompt_assembly.agent_prompt import assemble_agent_prompt
 from core.providers.base import Message, ProviderError
 from core.providers.factory import get_adapter
 from core.schemas import AgentTurn, RollCall, SessionPacket
 from core.schemas.constants import AGENT_TIMEOUT_SECONDS
 from core.schemas.enums import SessionSubstate, TurnType
+from orchestration.engine.state import RUNTIME_KEY, EngineStateError, strip_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 async def run_agent_dispatch(
     session_dir: Path,
     state: dict,
-    manager: ConnectionManager,
+    broadcast_fn: Callable[[str, dict], Awaitable[None]],
     providers_config: dict[str, ProviderConfig],
 ) -> dict:
     """Dispatch approved cards to background agents in parallel.
@@ -56,7 +57,7 @@ async def run_agent_dispatch(
             bundle_id=bundle_id,
             assignment_map=assignment_map,
             providers_config=providers_config,
-            manager=manager,
+            broadcast_fn=broadcast_fn,
         )
         for card in approved_cards
     ]
@@ -98,7 +99,7 @@ async def _dispatch_one(
     bundle_id: str,
     assignment_map: dict,
     providers_config: dict[str, ProviderConfig],
-    manager: ConnectionManager,
+    broadcast_fn: Callable[[str, dict], Awaitable[None]],
 ) -> dict:
     """Call one agent and return a dispatch_result dict."""
 
@@ -192,7 +193,7 @@ async def _dispatch_one(
     append_turn(session_dir, role_id, agent_turn)
 
     # Broadcast per-agent event
-    await manager.broadcast(
+    await broadcast_fn(
         session_id,
         {
             "event": "agent_response",
@@ -240,8 +241,33 @@ def _load_roll_call(session_dir: Path) -> RollCall:
     return load_roll_call(session_dir)
 
 
-# LangGraph-compatible stub for graph.py topology definition
 async def agent_dispatch_node(state: dict) -> dict:
-    """LangGraph stub.  Actual dispatch requires injected dependencies — see runner.py."""
+    """LangGraph node: dispatch approved cards to background agents."""
 
-    return state
+    assert len(state.get("approved_cards", [])) > 0, (
+        "agent_dispatch_node entered with no approved cards. " "Check human_gate routing logic."
+    )
+
+    runtime = state.get(RUNTIME_KEY, {})
+    broadcast_fn = runtime.get("broadcast") or _noop_broadcast
+    data_root = runtime.get("data_root")
+
+    session_dir = Path(state["session_dir"])
+    providers_config = runtime.get("providers_config")
+    if providers_config is None:
+        if data_root is None:
+            raise EngineStateError("agent_dispatch_node missing data_root for provider lookup.")
+        providers_config = load_providers(Path(data_root))
+
+    updated_state = await run_agent_dispatch(
+        session_dir,
+        state,
+        broadcast_fn,
+        providers_config,
+    )
+    save_state(session_dir, strip_runtime(updated_state))
+    return updated_state
+
+
+async def _noop_broadcast(session_id: str, event: dict) -> None:
+    return None

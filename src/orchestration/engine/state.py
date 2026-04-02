@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
+
+RUNTIME_KEY = "_runtime"
 
 
-class GraphState(TypedDict, total=False):
+class EngineStateError(RuntimeError):
+    """Raised when the engine state violates a graph invariant."""
+
+
+class EngineState(TypedDict, total=False):
     """State carried between graph nodes.
 
     All fields are optional (total=False) because nodes update only a subset
@@ -40,8 +46,24 @@ class GraphState(TypedDict, total=False):
     dispatch_results: list[dict]
     current_bundle_id: str
 
+    # Latest bundled payload (used to enforce moderator entry invariant)
+    latest_bundle: dict[str, Any] | None
+
     # Error message if the session entered ERROR state
     error: str
 
     # Current substate (mirrors state.json["substate"])
     substate: str
+
+    # True from session start until AGENT_AGGREGATION completes for the first time.
+    is_cycle_one: bool
+
+
+def strip_runtime(state: dict) -> dict:
+    """Return a shallow copy of state without runtime-only keys."""
+
+    if RUNTIME_KEY not in state:
+        return state
+    cleaned = dict(state)
+    cleaned.pop(RUNTIME_KEY, None)
+    return cleaned

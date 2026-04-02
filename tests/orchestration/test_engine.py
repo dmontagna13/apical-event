@@ -11,19 +11,25 @@ from uuid import uuid4
 import pytest
 
 from core.journals import (
+    append_turn,
+    create_session_dir,
     init_journal,
     read_all_bundles,
     read_journal,
+    save_packet,
+    save_roll_call,
     save_state,
 )
 from core.providers.base import CompletionResult, ToolCall
-from core.schemas import KanbanBoard, SessionPacket
-from core.schemas.enums import SessionState, SessionSubstate
-from orchestration.engine.nodes.aggregation import run_agent_aggregation
-from orchestration.engine.nodes.dispatch import run_agent_dispatch
+from core.schemas import AgentTurn, KanbanBoard, SessionPacket
+from core.schemas.enums import SessionState, SessionSubstate, TurnType
+from orchestration.engine.graph import build_graph
+from orchestration.engine.nodes.aggregation import agent_aggregation_node, run_agent_aggregation
+from orchestration.engine.nodes.dispatch import agent_dispatch_node, run_agent_dispatch
 from orchestration.engine.nodes.human_gate import process_gate_event
-from orchestration.engine.nodes.moderator import run_moderator_turn
-from orchestration.engine.runner import signal_human_gate
+from orchestration.engine.nodes.moderator import moderator_turn_node, run_moderator_turn
+from orchestration.engine.runner import signal_human_gate, start_session
+from orchestration.engine.state import RUNTIME_KEY, EngineStateError
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -52,6 +58,7 @@ def _make_state(session_dir: Path, session_id: str = "sess_test") -> dict:
         "session_dir": str(session_dir),
         "state": SessionState.ACTIVE.value,
         "substate": SessionSubstate.MODERATOR_TURN.value,
+        "is_cycle_one": False,
         "kanban": kanban.model_dump(mode="json"),
         "pending_action_cards": [],
         "pending_quizzes": [],
@@ -60,6 +67,7 @@ def _make_state(session_dir: Path, session_id: str = "sess_test") -> dict:
         "moderator_messages": [],
         "approved_cards": [],
         "dispatch_results": [],
+        "latest_bundle": {"bundle_id": "bundle_001"},
         "moderator_role_id": moderator_id,
         "all_role_ids": [r.role_id for r in packet.roles],
         "non_moderator_role_ids": non_mod_ids,
@@ -105,6 +113,194 @@ def _mock_providers_config(session_dir: Path, valid_roll_call) -> dict:
     for assignment in valid_roll_call.assignments:
         providers[assignment.provider] = dummy_cfg
     return providers
+
+
+# ---------------------------------------------------------------------------
+# start_session / graph entry
+# ---------------------------------------------------------------------------
+
+
+def test_graph_entry_point_is_agent_aggregation():
+    graph = build_graph()
+    if getattr(graph, "entry_point", None):
+        assert graph.entry_point == "agent_aggregation"
+    else:
+        graph_obj = graph.get_graph()
+        assert graph_obj.entry_point == "agent_aggregation"
+
+
+@pytest.mark.asyncio
+async def test_start_session_dispatches_all_roles_in_parallel(
+    tmp_data_root, valid_packet, valid_roll_call
+):
+    session_id = "sess_test"
+    session_dir = create_session_dir(tmp_data_root, valid_packet.project_name, session_id)
+    save_packet(session_dir, valid_packet)
+    save_roll_call(session_dir, valid_roll_call)
+
+    for role in valid_packet.roles:
+        init_journal(session_dir, role.role_id, session_id)
+
+    kanban = KanbanBoard.from_agenda(valid_packet.agenda)
+    state = {
+        "session_id": session_id,
+        "project_name": valid_packet.project_name,
+        "packet_id": valid_packet.packet_id,
+        "state": SessionState.ACTIVE.value,
+        "substate": None,
+        "kanban": kanban.model_dump(mode="json"),
+        "pending_action_cards": [],
+        "pending_quizzes": [],
+        "chat_history": [],
+        "queued_human_messages": [],
+    }
+    save_state(session_dir, state)
+
+    broadcast_fn = AsyncMock()
+    providers_config = _mock_providers_config(session_dir, valid_roll_call)
+
+    expected_calls = len(valid_packet.roles)
+    started = {"count": 0}
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockingProvider:
+        async def complete(self, messages, model, tools=None, response_format=None):
+            started["count"] += 1
+            if started["count"] == expected_calls:
+                all_started.set()
+            await release.wait()
+            return CompletionResult(
+                text="init",
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
+
+    provider = _BlockingProvider()
+    seen = {}
+
+    class _FakeGraph:
+        async def ainvoke(self, state, config=None):
+            assert config["entry_point"] == "agent_aggregation"
+            seen["substate"] = state.get("substate")
+            seen["is_cycle_one"] = state.get("is_cycle_one")
+            await agent_aggregation_node(state)
+            return state
+
+        def get_graph(self):
+            return build_graph().get_graph()
+
+    with (
+        patch("orchestration.engine.runner.get_adapter", return_value=provider),
+        patch("orchestration.engine.runner.load_providers", return_value=providers_config),
+        patch("orchestration.engine.runner.build_graph", return_value=_FakeGraph()),
+    ):
+        task = asyncio.create_task(start_session(session_id, tmp_data_root, broadcast_fn))
+        await all_started.wait()
+        state_payload = json.loads((session_dir / "state.json").read_text())
+        assert state_payload["substate"] == SessionSubstate.INIT_DISPATCH.value
+        release.set()
+        await task
+
+    assert started["count"] == expected_calls
+    assert seen["substate"] == SessionSubstate.AGENT_AGGREGATION.value
+    assert seen["is_cycle_one"] is True
+
+    for role in valid_packet.roles:
+        journal = read_journal(session_dir, role.role_id)
+        assert len(journal.turns) == 1
+        assert journal.turns[0].turn_type == TurnType.INIT
+
+    bundles = read_all_bundles(session_dir)
+    assert bundles
+    assert bundles[0].bundle_id == "bundle_001"
+
+
+# ---------------------------------------------------------------------------
+# invariants (moderator/dispatch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_moderator_turn_raises_without_bundle(tmp_session_dir):
+    state = _make_state(tmp_session_dir)
+    state["latest_bundle"] = None
+    with pytest.raises(EngineStateError):
+        await moderator_turn_node(state)
+
+
+@pytest.mark.asyncio
+async def test_agent_dispatch_asserts_approved_cards(tmp_session_dir):
+    state = _make_state(tmp_session_dir)
+    state["approved_cards"] = []
+    with pytest.raises(AssertionError):
+        await agent_dispatch_node(state)
+
+
+@pytest.mark.asyncio
+async def test_aggregation_cycle_one_excludes_moderator_init(tmp_session_dir, valid_packet):
+    session_id = "sess_test"
+    for role in valid_packet.roles:
+        init_journal(tmp_session_dir, role.role_id, session_id)
+        agent_turn = AgentTurn(
+            turn_id=uuid4(),
+            session_id=session_id,
+            role_id=role.role_id,
+            turn_type=TurnType.INIT,
+            bundle_id=None,
+            prompt_hash="",
+            approved_prompt="init",
+            agent_response=f"hello from {role.role_id}",
+            status="OK",
+            error_message=None,
+            metadata={"latency_ms": 1},
+        )
+        append_turn(tmp_session_dir, role.role_id, agent_turn)
+
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    state["is_cycle_one"] = True
+    state[RUNTIME_KEY] = {"broadcast": AsyncMock(), "data_root": tmp_session_dir}
+
+    result_state = await agent_aggregation_node(state)
+    bundles = read_all_bundles(tmp_session_dir)
+    assert len(bundles) == 1
+    response_roles = {resp.role_id for resp in bundles[0].responses}
+    moderator_id = next(r.role_id for r in valid_packet.roles if r.is_moderator)
+    assert moderator_id not in response_roles
+    assert result_state["is_cycle_one"] is False
+
+
+@pytest.mark.asyncio
+async def test_aggregation_cycle_one_sets_flag_false(tmp_session_dir, valid_packet):
+    session_id = "sess_test"
+    for role in valid_packet.roles:
+        init_journal(tmp_session_dir, role.role_id, session_id)
+        agent_turn = AgentTurn(
+            turn_id=uuid4(),
+            session_id=session_id,
+            role_id=role.role_id,
+            turn_type=TurnType.INIT,
+            bundle_id=None,
+            prompt_hash="",
+            approved_prompt="init",
+            agent_response=f"hello from {role.role_id}",
+            status="OK",
+            error_message=None,
+            metadata={"latency_ms": 1},
+        )
+        append_turn(tmp_session_dir, role.role_id, agent_turn)
+
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    state["is_cycle_one"] = True
+    state[RUNTIME_KEY] = {"broadcast": AsyncMock(), "data_root": tmp_session_dir}
+
+    result_state = await agent_aggregation_node(state)
+    assert result_state["is_cycle_one"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +426,6 @@ def test_process_gate_modified_card():
 async def test_dispatch_node_writes_journals(tmp_session_dir, valid_packet, valid_roll_call):
     """Dispatch with mocked providers writes journal entries."""
 
-    from core.journals import save_roll_call
-
     save_roll_call(tmp_session_dir, valid_roll_call)
 
     non_mod_roles = [r for r in valid_packet.roles if not r.is_moderator]
@@ -251,12 +445,13 @@ async def test_dispatch_node_writes_journals(tmp_session_dir, valid_packet, vali
 
     providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
 
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
     with patch("orchestration.engine.nodes.dispatch.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _mock_provider("Agent analysis result.")
-        result_state = await run_agent_dispatch(tmp_session_dir, state, manager, providers_config)
+        result_state = await run_agent_dispatch(
+            tmp_session_dir, state, broadcast_fn, providers_config
+        )
 
     assert result_state["substate"] == SessionSubstate.AGENT_AGGREGATION.value
     assert len(result_state["dispatch_results"]) == 1
@@ -272,8 +467,6 @@ async def test_dispatch_node_writes_journals(tmp_session_dir, valid_packet, vali
 @pytest.mark.asyncio
 async def test_dispatch_node_timeout_captured(tmp_session_dir, valid_packet, valid_roll_call):
     """Timed-out agent call produces TIMEOUT status in dispatch_results."""
-
-    from core.journals import save_roll_call
 
     save_roll_call(tmp_session_dir, valid_roll_call)
 
@@ -293,8 +486,7 @@ async def test_dispatch_node_timeout_captured(tmp_session_dir, valid_packet, val
 
     providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
 
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
     async def _slow_complete(*args, **kwargs):
         await asyncio.sleep(200)  # longer than AGENT_TIMEOUT_SECONDS in test
@@ -306,7 +498,9 @@ async def test_dispatch_node_timeout_captured(tmp_session_dir, valid_packet, val
         patch("orchestration.engine.nodes.dispatch.get_adapter", return_value=slow_provider),
         patch("orchestration.engine.nodes.dispatch.AGENT_TIMEOUT_SECONDS", 0.01),
     ):
-        result_state = await run_agent_dispatch(tmp_session_dir, state, manager, providers_config)
+        result_state = await run_agent_dispatch(
+            tmp_session_dir, state, broadcast_fn, providers_config
+        )
 
     assert result_state["dispatch_results"][0]["status"] == "TIMEOUT"
 
@@ -334,10 +528,9 @@ async def test_aggregation_node_writes_bundle(tmp_session_dir, valid_packet):
         }
     ]
 
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
-    result_state = await run_agent_aggregation(tmp_session_dir, state, manager)
+    result_state = await run_agent_aggregation(tmp_session_dir, state, broadcast_fn)
 
     assert result_state["substate"] == SessionSubstate.MODERATOR_TURN.value
 
@@ -348,7 +541,7 @@ async def test_aggregation_node_writes_bundle(tmp_session_dir, valid_packet):
 
     # Moderator messages should have been updated with the bundle text
     mod_msgs = result_state["moderator_messages"]
-    assert any("bundle_001" in m["content"] for m in mod_msgs if m["role"] == "user")
+    assert any("AGENT RESPONSES" in m["content"] for m in mod_msgs if m["role"] == "user")
 
 
 @pytest.mark.asyncio
@@ -369,10 +562,9 @@ async def test_aggregation_clears_dispatch_state(tmp_session_dir):
     ]
     state["approved_cards"] = [{"card_id": str(uuid4()), "status": "APPROVED"}]
 
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
-    result_state = await run_agent_aggregation(tmp_session_dir, state, manager)
+    result_state = await run_agent_aggregation(tmp_session_dir, state, broadcast_fn)
     assert result_state["dispatch_results"] == []
     assert result_state["approved_cards"] == []
 
@@ -386,20 +578,19 @@ async def test_aggregation_clears_dispatch_state(tmp_session_dir):
 async def test_moderator_turn_text_response(tmp_session_dir, valid_packet, valid_roll_call):
     """Moderator turn with text-only response updates chat_history and substate."""
 
-    from core.journals import save_roll_call
-
     save_roll_call(tmp_session_dir, valid_roll_call)
 
     state = _make_state(tmp_session_dir)
     save_state(tmp_session_dir, state)
 
     providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _mock_provider("Hello from moderator.")
-        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
+        result_state = await run_moderator_turn(
+            tmp_session_dir, state, broadcast_fn, providers_config
+        )
 
     assert result_state["substate"] == SessionSubstate.HUMAN_GATE.value
     chat = result_state["chat_history"]
@@ -410,16 +601,13 @@ async def test_moderator_turn_text_response(tmp_session_dir, valid_packet, valid
 async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, valid_roll_call):
     """Moderator turn with valid tool calls updates pending_action_cards."""
 
-    from core.journals import save_roll_call
-
     save_roll_call(tmp_session_dir, valid_roll_call)
 
     state = _make_state(tmp_session_dir)
     save_state(tmp_session_dir, state)
 
     providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
     non_mod_id = state["non_moderator_role_ids"][0]
     tool_call = ToolCall(
@@ -437,7 +625,9 @@ async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, val
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _mock_provider("Here are the action cards.", [tool_call])
-        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
+        result_state = await run_moderator_turn(
+            tmp_session_dir, state, broadcast_fn, providers_config
+        )
 
     assert len(result_state["pending_action_cards"]) == 1
     assert result_state["pending_action_cards"][0]["target_role_id"] == non_mod_id
@@ -447,16 +637,13 @@ async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, val
 async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_roll_call):
     """Malformed tool call triggers retry prompt (up to TOOL_CALL_RETRY_MAX)."""
 
-    from core.journals import save_roll_call
-
     save_roll_call(tmp_session_dir, valid_roll_call)
 
     state = _make_state(tmp_session_dir)
     save_state(tmp_session_dir, state)
 
     providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
     # Tool call targets the moderator — always invalid
     bad_tool_call = ToolCall(
@@ -491,12 +678,14 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
         mock_get_adapter.return_value = _CountingProvider()
-        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
+        result_state = await run_moderator_turn(
+            tmp_session_dir, state, broadcast_fn, providers_config
+        )
 
     # 1 initial call + up to TOOL_CALL_RETRY_MAX retries — card should be dropped
     assert len(result_state["pending_action_cards"]) == 0
     # tool_call_dropped event should have been broadcast
-    calls = [call[0][1] for call in manager.broadcast.call_args_list]
+    calls = [call[0][1] for call in broadcast_fn.call_args_list]
     assert any(e.get("event") == "tool_call_dropped" for e in calls)
 
 
@@ -504,7 +693,6 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
 async def test_moderator_turn_api_failure_sets_error(tmp_session_dir, valid_roll_call):
     """Provider failure after max retries transitions session to ERROR."""
 
-    from core.journals import save_roll_call
     from core.providers.base import ProviderError
 
     save_roll_call(tmp_session_dir, valid_roll_call)
@@ -513,8 +701,7 @@ async def test_moderator_turn_api_failure_sets_error(tmp_session_dir, valid_roll
     save_state(tmp_session_dir, state)
 
     providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
-    manager = MagicMock()
-    manager.broadcast = AsyncMock()
+    broadcast_fn = AsyncMock()
 
     class _FailingProvider:
         async def complete(self, messages, model, tools=None, response_format=None):
@@ -528,7 +715,9 @@ async def test_moderator_turn_api_failure_sets_error(tmp_session_dir, valid_roll
         patch("orchestration.engine.nodes.moderator.MODERATOR_RETRY_BACKOFF", [0, 0, 0]),
     ):
         mock_get_adapter.return_value = _FailingProvider()
-        result_state = await run_moderator_turn(tmp_session_dir, state, manager, providers_config)
+        result_state = await run_moderator_turn(
+            tmp_session_dir, state, broadcast_fn, providers_config
+        )
 
     assert result_state["state"] == SessionState.ERROR.value
 
