@@ -13,7 +13,7 @@ from orchestration.tools.handlers import (
     handle_update_kanban,
 )
 from orchestration.tools.retry import build_retry_prompt
-from orchestration.tools.validation import validate_tool_call
+from orchestration.tools.validation import ToolValidationError, validate_tool_call, validate_tool_semantics
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -121,6 +121,17 @@ def test_handle_action_cards_multiple(base_state):
     assert result.success is True
     assert len(base_state["pending_action_cards"]) == 2
     assert "Created 2 action card(s)" in result.message
+
+
+def test_duplicate_role_id_in_action_cards(base_state):
+    args = {
+        "cards": [
+            {"target_role_id": "RG-CRIT", "prompt_text": "P1", "context_note": "N1"},
+            {"target_role_id": "RG-CRIT", "prompt_text": "P2", "context_note": "N2"},
+        ]
+    }
+    with pytest.raises(ToolValidationError):
+        handle_generate_action_cards(args, base_state)
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +318,27 @@ def test_validate_valid_update_kanban_passes(base_state):
     args = {"updates": [{"question_id": "Q-01", "new_status": "RESOLVED", "notes": "Done"}]}
     errors = validate_tool_call("update_kanban", args, base_state)
     assert errors == []
+
+
+def test_validate_tool_semantics_duplicate_roles(base_state):
+    args = {
+        "cards": [
+            {"target_role_id": "RG-CRIT", "prompt_text": "P1", "context_note": "N1"},
+            {"target_role_id": "RG-CRIT", "prompt_text": "P2", "context_note": "N2"},
+        ]
+    }
+    errors = validate_tool_semantics("generate_action_cards", args, base_state)
+    assert errors
+
+
+def test_validate_tool_semantics_quiz_one_option(base_state):
+    args = {
+        "decision_title": "Pick one",
+        "options": ["Only"],
+        "context_summary": "Need a choice.",
+    }
+    errors = validate_tool_semantics("generate_decision_quiz", args, base_state)
+    assert errors
 
 
 # ---------------------------------------------------------------------------

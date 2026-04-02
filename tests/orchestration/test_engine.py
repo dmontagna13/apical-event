@@ -20,16 +20,22 @@ from core.journals import (
     save_roll_call,
     save_state,
 )
-from core.providers.base import CompletionResult, ToolCall
+from core.providers.base import CompletionResult, Message, ToolCall
 from core.schemas import AgentTurn, KanbanBoard, SessionPacket
+from core.schemas.constants import MODERATOR_SUBLOOP_MAX_ITERATIONS
 from core.schemas.enums import SessionState, SessionSubstate, TurnType
 from orchestration.engine.graph import build_graph
 from orchestration.engine.nodes.aggregation import agent_aggregation_node, run_agent_aggregation
 from orchestration.engine.nodes.dispatch import agent_dispatch_node, run_agent_dispatch
 from orchestration.engine.nodes.human_gate import process_gate_event
-from orchestration.engine.nodes.moderator import moderator_turn_node, run_moderator_turn
+from orchestration.engine.nodes.moderator import (
+    _run_moderator_subloop,
+    moderator_turn_node,
+    run_moderator_turn,
+)
 from orchestration.engine.runner import signal_human_gate, start_session
 from orchestration.engine.state import RUNTIME_KEY, EngineStateError
+from orchestration.tools.definitions import get_tool_definitions
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -67,6 +73,7 @@ def _make_state(session_dir: Path, session_id: str = "sess_test") -> dict:
         "moderator_messages": [],
         "approved_cards": [],
         "dispatch_results": [],
+        "current_bundle_id": "bundle_001",
         "latest_bundle": {"bundle_id": "bundle_001"},
         "moderator_role_id": moderator_id,
         "all_role_ids": [r.role_id for r in packet.roles],
@@ -239,6 +246,334 @@ async def test_agent_dispatch_asserts_approved_cards(tmp_session_dir):
     state["approved_cards"] = []
     with pytest.raises(AssertionError):
         await agent_dispatch_node(state)
+
+
+@pytest.mark.asyncio
+async def test_subloop_two_iterations(tmp_session_dir, valid_roll_call, valid_packet):
+    session_id = "sess_test"
+    save_roll_call(tmp_session_dir, valid_roll_call)
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    tools = get_tool_definitions()
+
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model, tools=None, response_format=None):
+            self.calls += 1
+            if self.calls == 1:
+                return CompletionResult(
+                    text="Updated kanban.",
+                    tool_calls=[
+                        ToolCall(
+                            name="update_kanban",
+                            arguments={
+                                "updates": [
+                                    {
+                                        "question_id": valid_packet.agenda[0].question_id,
+                                        "new_status": "AGENT_DELIBERATION",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=1,
+                )
+            return CompletionResult(
+                text="Synthesis complete.",
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
+
+    provider = _Provider()
+    setattr(provider, "_apical_model", "mock-model")
+
+    final_text, ws_events = await _run_moderator_subloop(
+        system_prompt="system",
+        conversation_history=[Message(role="user", content="Start")],
+        tools=tools,
+        provider_adapter=provider,
+        session_state=state,
+        ws_manager=AsyncMock(),
+        session_id=session_id,
+    )
+
+    assert provider.calls == 2
+    assert final_text == "Synthesis complete."
+    assert len(ws_events) == 1
+    assert state["kanban"]["tasks"][0]["status"] == "AGENT_DELIBERATION"
+
+
+@pytest.mark.asyncio
+async def test_subloop_three_iterations(tmp_session_dir, valid_roll_call, valid_packet):
+    session_id = "sess_test"
+    save_roll_call(tmp_session_dir, valid_roll_call)
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    tools = get_tool_definitions()
+
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model, tools=None, response_format=None):
+            self.calls += 1
+            if self.calls == 1:
+                return CompletionResult(
+                    text="Kanban updated.",
+                    tool_calls=[
+                        ToolCall(
+                            name="update_kanban",
+                            arguments={
+                                "updates": [
+                                    {
+                                        "question_id": valid_packet.agenda[0].question_id,
+                                        "new_status": "AGENT_DELIBERATION",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=1,
+                )
+            if self.calls == 2:
+                return CompletionResult(
+                    text="Requesting follow-ups.",
+                    tool_calls=[
+                        ToolCall(
+                            name="generate_action_cards",
+                            arguments={
+                                "cards": [
+                                    {
+                                        "target_role_id": "RG-CRIT",
+                                        "prompt_text": "Clarify domain boundaries.",
+                                        "context_note": "Need critic follow-up.",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=1,
+                )
+            return CompletionResult(
+                text="Final synthesis.",
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
+
+    provider = _Provider()
+    setattr(provider, "_apical_model", "mock-model")
+
+    final_text, ws_events = await _run_moderator_subloop(
+        system_prompt="system",
+        conversation_history=[Message(role="user", content="Start")],
+        tools=tools,
+        provider_adapter=provider,
+        session_state=state,
+        ws_manager=AsyncMock(),
+        session_id=session_id,
+    )
+
+    assert provider.calls == 3
+    assert final_text == "Final synthesis."
+    assert len(ws_events) == 2
+    assert len(state["pending_action_cards"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_subloop_cap_exceeded(tmp_session_dir, valid_roll_call, valid_packet):
+    session_id = "sess_test"
+    save_roll_call(tmp_session_dir, valid_roll_call)
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
+
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model, tools=None, response_format=None):
+            self.calls += 1
+            return CompletionResult(
+                text="Tooling.",
+                tool_calls=[
+                    ToolCall(
+                        name="update_kanban",
+                        arguments={
+                            "updates": [
+                                {
+                                    "question_id": valid_packet.agenda[0].question_id,
+                                    "new_status": "AGENT_DELIBERATION",
+                                }
+                            ]
+                        },
+                    )
+                ],
+                usage={},
+                finish_reason="tool_calls",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
+
+    provider = _Provider()
+
+    broadcast_fn = AsyncMock()
+    with patch("orchestration.engine.nodes.moderator.get_adapter", return_value=provider):
+        await run_moderator_turn(tmp_session_dir, state, broadcast_fn, providers_config)
+
+    assert provider.calls == MODERATOR_SUBLOOP_MAX_ITERATIONS
+    failure_text = "Moderator sub-loop exceeded"
+    assert any(
+        call.args[1]["data"]["text"].startswith(failure_text)
+        for call in broadcast_fn.await_args_list
+        if call.args and call.args[1]["event"] == "moderator_turn"
+    )
+
+
+@pytest.mark.asyncio
+async def test_subloop_ws_events_not_broadcast_mid_loop(
+    tmp_session_dir, valid_roll_call, valid_packet
+):
+    session_id = "sess_test"
+    save_roll_call(tmp_session_dir, valid_roll_call)
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    providers_config = _mock_providers_config(tmp_session_dir, valid_roll_call)
+
+    broadcast_fn = AsyncMock()
+
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model, tools=None, response_format=None):
+            assert broadcast_fn.call_count == 0
+            self.calls += 1
+            if self.calls == 1:
+                return CompletionResult(
+                    text="Update kanban.",
+                    tool_calls=[
+                        ToolCall(
+                            name="update_kanban",
+                            arguments={
+                                "updates": [
+                                    {
+                                        "question_id": valid_packet.agenda[0].question_id,
+                                        "new_status": "AGENT_DELIBERATION",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=1,
+                )
+            return CompletionResult(
+                text="Done.",
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
+
+    provider = _Provider()
+
+    with patch("orchestration.engine.nodes.moderator.get_adapter", return_value=provider):
+        await run_moderator_turn(tmp_session_dir, state, broadcast_fn, providers_config)
+
+    assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_subloop_tool_result_appended_to_history(tmp_session_dir, valid_roll_call, valid_packet):
+    session_id = "sess_test"
+    save_roll_call(tmp_session_dir, valid_roll_call)
+    state = _make_state(tmp_session_dir, session_id=session_id)
+    tools = get_tool_definitions()
+
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+            self.second_messages = None
+
+        async def complete(self, messages, model, tools=None, response_format=None):
+            self.calls += 1
+            if self.calls == 1:
+                return CompletionResult(
+                    text="First tool call.",
+                    tool_calls=[
+                        ToolCall(
+                            name="update_kanban",
+                            arguments={
+                                "updates": [
+                                    {
+                                        "question_id": valid_packet.agenda[0].question_id,
+                                        "new_status": "AGENT_DELIBERATION",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=1,
+                )
+            self.second_messages = messages
+            return CompletionResult(
+                text="Final response.",
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
+
+    provider = _Provider()
+    setattr(provider, "_apical_model", "mock-model")
+
+    await _run_moderator_subloop(
+        system_prompt="system",
+        conversation_history=[Message(role="user", content="Start")],
+        tools=tools,
+        provider_adapter=provider,
+        session_state=state,
+        ws_manager=AsyncMock(),
+        session_id=session_id,
+    )
+
+    assert provider.calls == 2
+    assert provider.second_messages is not None
+    assert any(
+        msg.role == "assistant" and msg.content == "First tool call."
+        for msg in provider.second_messages
+    )
+    assert any(
+        msg.role == "user"
+        and "Tool result" in msg.content
+        and "update_kanban" in msg.content
+        for msg in provider.second_messages
+    )
 
 
 @pytest.mark.asyncio
@@ -609,21 +944,46 @@ async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, val
     broadcast_fn = AsyncMock()
 
     non_mod_id = state["non_moderator_role_ids"][0]
-    tool_call = ToolCall(
-        name="generate_action_cards",
-        arguments={
-            "cards": [
-                {
-                    "target_role_id": non_mod_id,
-                    "prompt_text": "Analyse domains",
-                    "context_note": "First round",
-                }
-            ]
-        },
-    )
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model, tools=None, response_format=None):
+            self.calls += 1
+            if self.calls == 1:
+                return CompletionResult(
+                    text="Drafting cards.",
+                    tool_calls=[
+                        ToolCall(
+                            name="generate_action_cards",
+                            arguments={
+                                "cards": [
+                                    {
+                                        "target_role_id": non_mod_id,
+                                        "prompt_text": "Analyse domains",
+                                        "context_note": "First round",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=1,
+                )
+            return CompletionResult(
+                text="Here are the action cards.",
+                tool_calls=[],
+                usage={},
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+        async def health_check(self):
+            return True
 
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
-        mock_get_adapter.return_value = _mock_provider("Here are the action cards.", [tool_call])
+        mock_get_adapter.return_value = _Provider()
         result_state = await run_moderator_turn(
             tmp_session_dir, state, broadcast_fn, providers_config
         )
@@ -633,8 +993,8 @@ async def test_moderator_turn_with_tool_calls(tmp_session_dir, valid_packet, val
 
 
 @pytest.mark.asyncio
-async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_roll_call):
-    """Malformed tool call triggers retry prompt (up to TOOL_CALL_RETRY_MAX)."""
+async def test_moderator_turn_invalid_tool_call_prompts_correction(tmp_session_dir, valid_roll_call):
+    """Malformed tool call triggers a correction prompt in the sub-loop."""
 
     save_roll_call(tmp_session_dir, valid_roll_call)
 
@@ -658,15 +1018,46 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
         },
     )
 
-    call_count = 0
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+            self.second_messages = None
 
-    class _CountingProvider:
-        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
-            nonlocal call_count
-            call_count += 1
+        async def complete(self, messages, model, tools=None, response_format=None):
+            self.calls += 1
+            if self.calls == 1:
+                return CompletionResult(
+                    text="Trying again.",
+                    tool_calls=[bad_tool_call],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=0,
+                )
+            if self.calls == 2:
+                self.second_messages = messages
+                return CompletionResult(
+                    text="Corrected card.",
+                    tool_calls=[
+                        ToolCall(
+                            name="generate_action_cards",
+                            arguments={
+                                "cards": [
+                                    {
+                                        "target_role_id": "RG-CRIT",
+                                        "prompt_text": "Clarify domains",
+                                        "context_note": "Need critic follow-up",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                    usage={},
+                    finish_reason="tool_calls",
+                    latency_ms=0,
+                )
             return CompletionResult(
-                text="Trying again.",
-                tool_calls=[bad_tool_call],
+                text="Final response.",
+                tool_calls=[],
                 usage={},
                 finish_reason="stop",
                 latency_ms=0,
@@ -675,17 +1066,21 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
         async def health_check(self):
             return True
 
+    provider = _Provider()
     with patch("orchestration.engine.nodes.moderator.get_adapter") as mock_get_adapter:
-        mock_get_adapter.return_value = _CountingProvider()
+        mock_get_adapter.return_value = provider
         result_state = await run_moderator_turn(
             tmp_session_dir, state, broadcast_fn, providers_config
         )
 
-    # 1 initial call + up to TOOL_CALL_RETRY_MAX retries — card should be dropped
-    assert len(result_state["pending_action_cards"]) == 0
-    # tool_call_dropped event should have been broadcast
-    calls = [call[0][1] for call in broadcast_fn.call_args_list]
-    assert any(e.get("event") == "tool_call_dropped" for e in calls)
+    assert len(result_state["pending_action_cards"]) == 1
+    assert result_state["pending_action_cards"][0]["target_role_id"] == "RG-CRIT"
+    assert provider.second_messages is not None
+    assert any(
+        msg.role == "user"
+        and "Your last tool call to 'generate_action_cards' was invalid" in msg.content
+        for msg in provider.second_messages
+    )
 
 
 @pytest.mark.asyncio

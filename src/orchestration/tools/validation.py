@@ -12,6 +12,10 @@ _VALID_KANBAN_STATUSES = {
 }
 
 
+class ToolValidationError(ValueError):
+    """Raised when tool handler arguments violate behavioral constraints."""
+
+
 def validate_tool_call(tool_name: str, arguments: dict, session_state: dict) -> list[str]:
     """Validate a tool call against its schema and session context.
 
@@ -31,6 +35,55 @@ def validate_tool_call(tool_name: str, arguments: dict, session_state: dict) -> 
         return _validate_update_kanban(arguments, session_state)
 
     return []  # unreachable given the check above
+
+
+def validate_tool_semantics(tool_name: str, arguments: dict, session_state: dict) -> list[str]:
+    """Validate tool arguments against behavioral rules beyond schema checks."""
+
+    errors: list[str] = []
+
+    if tool_name == "generate_action_cards":
+        cards = arguments.get("cards", [])
+        if not isinstance(cards, list):
+            return ["'cards' must be an array"]
+        seen: set[str] = set()
+        moderator_id: str | None = session_state.get("moderator_role_id")
+        for index, card in enumerate(cards):
+            target = card.get("target_role_id")
+            if not target:
+                continue
+            if target in seen:
+                errors.append(
+                    f"cards[{index}]: duplicate target_role_id '{target}'. "
+                    "Emit exactly one card per target agent per turn."
+                )
+            else:
+                seen.add(target)
+            if moderator_id and target == moderator_id:
+                errors.append(
+                    f"cards[{index}]: target_role_id cannot be the moderator role '{moderator_id}'"
+                )
+        return errors
+
+    if tool_name == "update_kanban":
+        updates = arguments.get("updates", [])
+        if not isinstance(updates, list):
+            return ["'updates' must be an array"]
+        kanban = session_state.get("kanban", {})
+        task_ids = {task["task_id"] for task in kanban.get("tasks", [])}
+        for index, update in enumerate(updates):
+            qid = update.get("question_id")
+            if qid and task_ids and qid not in task_ids:
+                errors.append(f"updates[{index}]: question_id '{qid}' not found in kanban")
+        return errors
+
+    if tool_name == "generate_decision_quiz":
+        options = arguments.get("options", [])
+        if not isinstance(options, list) or len(options) < 2:
+            errors.append("'options' must contain at least 2 entries")
+        return errors
+
+    return errors
 
 
 def _validate_action_cards(arguments: dict, session_state: dict) -> list[str]:

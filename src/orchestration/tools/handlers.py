@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from core.schemas import ActionCard, DecisionQuiz
+from orchestration.tools.validation import ToolValidationError
 
 
 @dataclass
@@ -43,6 +44,17 @@ def handle_generate_action_cards(arguments: dict, session_state: dict) -> ToolRe
 
     cards_data = arguments.get("cards", [])
     created = []
+
+    seen_roles: dict[str, int] = {}
+    for i, card in enumerate(cards_data):
+        role_id = card["target_role_id"]
+        if role_id in seen_roles:
+            raise ToolValidationError(
+                f"generate_action_cards: duplicate target_role_id '{role_id}' "
+                f"at index {i} (first seen at index {seen_roles[role_id]}). "
+                "Emit exactly one card per target agent per turn."
+            )
+        seen_roles[role_id] = i
 
     for card_data in cards_data:
         card = ActionCard(

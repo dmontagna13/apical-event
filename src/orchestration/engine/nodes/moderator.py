@@ -14,14 +14,117 @@ from core.prompt_assembly.moderator_prompt import assemble_moderator_prompt
 from core.providers.base import Message, ProviderAdapter, ProviderError
 from core.providers.factory import get_adapter
 from core.schemas import AgentTurn, RollCall, SessionPacket
-from core.schemas.constants import MODERATOR_RETRY_BACKOFF, MODERATOR_RETRY_MAX, TOOL_CALL_RETRY_MAX
+from core.schemas.constants import (
+    MODERATOR_RETRY_BACKOFF,
+    MODERATOR_RETRY_MAX,
+    MODERATOR_SUBLOOP_MAX_ITERATIONS,
+)
 from core.schemas.enums import ErrorCode, SessionState, SessionSubstate, TurnType
 from orchestration.engine.state import RUNTIME_KEY, EngineStateError, strip_runtime
 from orchestration.tools.definitions import get_tool_definitions
 from orchestration.tools.handlers import handle_tool_call
-from orchestration.tools.validation import validate_tool_call
+from orchestration.tools.validation import validate_tool_call, validate_tool_semantics
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_moderator_subloop(
+    system_prompt: str,
+    conversation_history: list[Message],
+    tools: list,
+    provider_adapter: ProviderAdapter,
+    session_state: dict,
+    ws_manager: Callable[[str, dict], Awaitable[None]],
+    session_id: str,
+) -> tuple[str, list[dict]]:
+    """Run the moderator sub-loop within a single moderator turn."""
+
+    model = getattr(provider_adapter, "_apical_model", None)
+    if not model:
+        session_state["_moderator_subloop_provider_error"] = True
+        return "", []
+
+    subloop_messages = list(conversation_history)
+    accumulated_events: list[dict] = []
+    latest_bundle = session_state.get("latest_bundle")
+    bundle_id = latest_bundle.get("bundle_id") if isinstance(latest_bundle, dict) else None
+    session_dir = Path(session_state["session_dir"])
+
+    for iteration in range(1, MODERATOR_SUBLOOP_MAX_ITERATIONS + 1):
+        approved_prompt = next(
+            (msg.content for msg in reversed(subloop_messages) if msg.role == "user"),
+            "",
+        )
+        result = await _call_with_backoff(
+            provider_adapter,
+            subloop_messages,
+            model,
+            system_prompt,
+            tools,
+            session_id,
+        )
+        if result is None:
+            session_state["_moderator_subloop_provider_error"] = True
+            return "", []
+
+        moderator_turn = AgentTurn(
+            turn_id=uuid4(),
+            session_id=session_id,
+            role_id=session_state.get("moderator_role_id", ""),
+            turn_type=TurnType.MODERATOR_SUBLOOP,
+            bundle_id=bundle_id,
+            prompt_hash="",
+            approved_prompt=approved_prompt,
+            agent_response=result.text or "",
+            status="OK",
+            error_message=None,
+            metadata={
+                **result.usage,
+                "latency_ms": result.latency_ms,
+                "finish_reason": result.finish_reason,
+                "iteration": iteration,
+            },
+        )
+        append_turn(session_dir, session_state.get("moderator_role_id", ""), moderator_turn)
+
+        assistant_text = result.text or ""
+        subloop_messages.append(Message(role="assistant", content=assistant_text))
+
+        if not result.tool_calls:
+            return assistant_text, accumulated_events
+
+        correction_needed = False
+        for tool_call in result.tool_calls:
+            errors = validate_tool_call(tool_call.name, tool_call.arguments, session_state)
+            errors.extend(validate_tool_semantics(tool_call.name, tool_call.arguments, session_state))
+            if errors:
+                correction_prompt = _build_tool_call_correction_prompt(
+                    tool_call.name, tool_call.arguments, errors
+                )
+                subloop_messages.append(Message(role="user", content=correction_prompt))
+                correction_needed = True
+                break
+
+            tool_result = handle_tool_call(tool_call.name, tool_call.arguments, session_state)
+            accumulated_events.extend(tool_result.ws_events)
+            subloop_messages.append(
+                Message(
+                    role="user",
+                    content=_format_tool_result_message(
+                        tool_call.name,
+                        tool_call.arguments,
+                        tool_result,
+                    ),
+                )
+            )
+
+        if correction_needed:
+            continue
+
+    session_state["_moderator_subloop_failed"] = True
+    return "", []
+
+
 
 
 async def run_moderator_turn(
@@ -103,16 +206,19 @@ async def run_moderator_turn(
             moderator_messages.append({"role": "user", "content": queued_text})
 
     messages = [Message(role=m["role"], content=m["content"]) for m in moderator_messages]
-    approved_prompt = next(
-        (msg["content"] for msg in reversed(moderator_messages) if msg["role"] == "user"),
-        "",
+
+    setattr(adapter, "_apical_model", model)
+    final_text, ws_events = await _run_moderator_subloop(
+        system_prompt=system_prompt,
+        conversation_history=messages,
+        tools=tools,
+        provider_adapter=adapter,
+        session_state=state,
+        ws_manager=broadcast_fn,
+        session_id=session_id,
     )
 
-    # Call the provider with backoff on errors
-    result = await _call_with_backoff(adapter, messages, model, system_prompt, tools, session_id)
-
-    if result is None:
-        # All retries exhausted — transition to ERROR
+    if state.pop("_moderator_subloop_provider_error", False):
         logger.error(
             "Moderator API failed after %d retries for session %s",
             MODERATOR_RETRY_MAX,
@@ -134,126 +240,32 @@ async def run_moderator_turn(
         )
         return state
 
-    latest_bundle = state.get("latest_bundle")
-    bundle_id = latest_bundle.get("bundle_id") if isinstance(latest_bundle, dict) else None
-    moderator_turn = AgentTurn(
-        turn_id=uuid4(),
-        session_id=session_id,
-        role_id=moderator_role.role_id,
-        turn_type=TurnType.DELIBERATION,
-        bundle_id=bundle_id,
-        prompt_hash="",
-        approved_prompt=approved_prompt,
-        agent_response=result.text or "",
-        status="OK",
-        error_message=None,
-        metadata={
-            **result.usage,
-            "latency_ms": result.latency_ms,
-            "finish_reason": result.finish_reason,
-        },
-    )
-    append_turn(session_dir, moderator_role.role_id, moderator_turn)
-
-    tool_calls = list(result.tool_calls)
-    if not tool_calls:
-        follow_up_prompt = (
-            "You must now call tools. Use update_kanban to reflect current progress and "
-            "generate_action_cards for the next agent prompts. If a decision point is ready, "
-            "use generate_decision_quiz. Respond with tool calls only; no additional text."
+    if state.pop("_moderator_subloop_failed", False):
+        failure_message = (
+            "Moderator sub-loop exceeded "
+            f"{MODERATOR_SUBLOOP_MAX_ITERATIONS} iterations without a final text response. "
+            "Please retry or switch the moderator model."
         )
-        follow_up_messages = [
-            *messages,
-            Message(role="assistant", content=result.text or ""),
-            Message(role="user", content=follow_up_prompt),
-        ]
-        follow_up_result = await _call_once(
-            adapter,
-            follow_up_messages,
-            model,
-            system_prompt,
-            tools,
-            tool_choice="required",
+        state.setdefault("chat_history", []).append(
+            {"role": "system", "content": failure_message}
         )
-        if follow_up_result is not None and follow_up_result.tool_calls:
-            tool_calls = list(follow_up_result.tool_calls)
-
-    # Store the moderator's text in chat_history
-    if result.text:
-        state.setdefault("chat_history", []).append({"role": "moderator", "content": result.text})
         await broadcast_fn(
             session_id,
-            {"event": "moderator_turn", "data": {"text": result.text}},
+            {"event": "moderator_turn", "data": {"text": failure_message}},
         )
+    else:
+        for ws_event in ws_events:
+            await broadcast_fn(session_id, ws_event)
 
-    # Update moderator conversation history
-    moderator_messages.append({"role": "assistant", "content": result.text or ""})
-
-    # Process tool calls (with per-tool correction attempts on validation failure)
-    # Keep tool_messages as plain dicts throughout for consistent subscripting
-    tool_messages = [{"role": m.role, "content": m.content} for m in messages]
-    tool_messages.append({"role": "assistant", "content": result.text or ""})
-
-    for tool_call in tool_calls:
-        errors = validate_tool_call(tool_call.name, tool_call.arguments, state)
-
-        attempt_count = 0
-        while errors and attempt_count < TOOL_CALL_RETRY_MAX:
-            logger.warning(
-                "Tool call '%s' invalid (attempt %d): %s",
-                tool_call.name,
-                attempt_count + 1,
-                errors,
-            )
-            attempt_prompt = _build_tool_call_correction_prompt(
-                tool_call.name,
-                tool_call.arguments,
-                errors,
-            )
-
-            tool_messages_objs = [
-                Message(role=m["role"], content=m["content"]) for m in tool_messages
-            ]
-            attempt_msg = Message(role="user", content=attempt_prompt)
-            tool_messages_objs.append(attempt_msg)
-            tool_messages.append({"role": "user", "content": attempt_prompt})
-
-            attempt_result = await _call_once(
-                adapter,
-                tool_messages_objs,
-                model,
-                system_prompt,
-                tools,
-            )
-            if attempt_result is None:
-                errors = ["Provider error during tool correction attempt"]
-                break
-
-            tool_call = attempt_result.tool_calls[0] if attempt_result.tool_calls else tool_call
-            errors = (
-                validate_tool_call(tool_call.name, tool_call.arguments, state)
-                if attempt_result.tool_calls
-                else []
-            )
-            tool_messages.append({"role": "assistant", "content": attempt_result.text or ""})
-            attempt_count += 1
-
-        if errors:
-            # Max retries exhausted — notify human
-            logger.warning(
-                "Dropping tool call '%s' after %d attempts",
-                tool_call.name,
-                attempt_count,
+        if final_text:
+            state.setdefault("chat_history", []).append(
+                {"role": "moderator", "content": final_text}
             )
             await broadcast_fn(
                 session_id,
-                {"event": "tool_call_dropped", "data": {"tool": tool_call.name, "errors": errors}},
+                {"event": "moderator_turn", "data": {"text": final_text}},
             )
-            continue
-
-        tool_result = handle_tool_call(tool_call.name, tool_call.arguments, state)
-        for ws_event in tool_result.ws_events:
-            await broadcast_fn(session_id, ws_event)
+            moderator_messages.append({"role": "assistant", "content": final_text})
 
     # Move queued human messages to chat history (now consumed)
     if queued:
@@ -302,7 +314,13 @@ async def _call_with_backoff(
     """
 
     for attempt in range(MODERATOR_RETRY_MAX):
-        result = await _call_once(adapter, messages, model, system_prompt, tools)
+        result = await _call_once(
+            adapter,
+            messages,
+            model,
+            system_prompt,
+            tools,
+        )
         if result is not None:
             return result
         if attempt < MODERATOR_RETRY_MAX - 1:
@@ -324,14 +342,13 @@ async def _call_once(
     model: str,
     system_prompt: str,
     tools: list,
-    tool_choice: str | dict | None = None,
 ) -> object | None:
     """Attempt a single provider call. Returns None on ProviderError."""
 
     try:
         system_msg = Message(role="system", content=system_prompt)
         full_messages = [system_msg] + list(messages)
-        return await adapter.complete(full_messages, model, tools=tools, tool_choice=tool_choice)
+        return await adapter.complete(full_messages, model, tools=tools)
     except ProviderError as exc:
         if exc.status_code == 400:
             logger.error(
@@ -398,6 +415,21 @@ def _build_tool_call_correction_prompt(
         "Please correct the parameters and submit a new tool call.\n\n"
         f"Invalid arguments:\n{args_str}\n\n"
         f"Errors:\n{errors_str}"
+    )
+
+
+def _format_tool_result_message(tool_name: str, arguments: dict, tool_result: object) -> str:
+    """Serialize tool execution results for inclusion in sub-loop context."""
+
+    import json
+
+    args_str = json.dumps(arguments, indent=2, default=str)
+    return (
+        "Tool result:\n"
+        f"tool: {tool_name}\n"
+        f"arguments: {args_str}\n"
+        f"success: {getattr(tool_result, 'success', False)}\n"
+        f"message: {getattr(tool_result, 'message', '')}"
     )
 
 

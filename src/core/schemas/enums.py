@@ -31,6 +31,7 @@ class TurnType(str, Enum):
 
     INIT = "INIT"
     DELIBERATION = "DELIBERATION"
+    MODERATOR_SUBLOOP = "MODERATOR_SUBLOOP"
 
 
 class BundleType(str, Enum):

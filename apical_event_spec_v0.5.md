@@ -1,4 +1,4 @@
-# APICAL-EVENT — TECHNICAL SPECIFICATION v0.4
+# APICAL-EVENT — TECHNICAL SPECIFICATION v0.5
 
 ## 0. Document purpose
 
@@ -310,10 +310,10 @@ NEVER:
 You control the pace and direction of deliberation. The human controls the decisions.
 
 AVAILABLE TOOLS:
-{tool definitions from §5, formatted for the provider's function-calling schema}
+{tool_definitions_text}
 
 CURRENT KANBAN STATE:
-{serialized KanbanBoard}
+{kanban_state}
 ```
 
 **For the Consensus Capture (generated at session end):**
@@ -537,6 +537,8 @@ The Moderator produces:
   - `generate_action_cards` → creates prompt cards in the action area.
   - `generate_decision_quiz` → creates a quiz in the action area.
   - `update_kanban` → modifies Kanban task statuses.
+
+**Implementation note:** `MODERATOR_TURN` is executed as a recursive sub-loop inside a single moderator turn. The backend may make multiple API calls to the Moderator in sequence, appending each tool result back into the context before the next call. The UI still observes a single atomic Moderator turn (action pane updates appear together after the sub-loop completes). The engine does not use `tool_choice`; tool calls are model-driven.
 
 If the Moderator generates no action cards and no quizzes (i.e., it only produces text and possibly Kanban updates), the system stays in MODERATOR_TURN/HUMAN_GATE so the user can respond conversationally. The loop only advances to AGENT_DISPATCH when there are approved action cards to send.
 
@@ -801,15 +803,15 @@ When the Moderator produces a malformed tool call:
 
 ### 5.3 Tool-use behavioral contract (enforcement rules)
 
-The following rules are enforced in code by `moderator_turn_node`. Violations trigger a retry, not silent acceptance.
+The following rules are enforced in code by `moderator_turn_node` via a recursive sub-loop. The sub-loop runs multiple moderator API calls within a single turn and remains atomic from the UI's perspective.
 
-1. **Bundle-triggered requirement.** When `last_processed_bundle_id` differs from the current bundle's ID, and `pending_action_cards` is empty and `pending_quizzes` is empty, tools are required. The engine sets `tool_choice="required"` on the initial API call — not as a fallback after a no-tool response.
+1. **Sub-loop iteration contract.** Each iteration calls the Moderator API with the full accumulated context (system prompt + conversation history + prior tool results). `tool_choice` is not used.
 
-2. **Semantic completeness.** `tool_choice="required"` is satisfied by any tool call, including `update_kanban` alone. That is insufficient. After parsing tool calls, the engine checks: if tools were required and neither `generate_action_cards` nor `generate_decision_quiz` was called, the response is treated as a retry trigger (same as a malformed tool call per §5.2). The retry prompt must name the missing tool explicitly.
+2. **Tool-call handling.** If the response contains tool calls, the engine executes them and appends both the assistant message and tool result messages back into the sub-loop context before continuing to the next iteration.
 
-3. **Cardinality enforcement.** `handle_generate_action_cards` rejects any call where the same `target_role_id` appears more than once. The moderator's own `role_id` is also rejected (already required by TASK-09). Duplicate targets are a validation error, not a warning.
+3. **Terminal response.** If the response contains no tool calls, the text is treated as the final moderator output and the sub-loop ends.
 
-4. **Bundle-processed tracking.** After a turn where required tools are successfully emitted and executed, the engine sets `state["last_processed_bundle_id"] = current_bundle_id`. This prevents re-triggering tool requirements when the human sends follow-up chat against the same bundle.
+4. **Iteration cap.** The sub-loop is capped at `MODERATOR_SUBLOOP_MAX_ITERATIONS` (default 6). If the cap is reached without a plain-text terminal response, the turn is treated as a failure and the user is notified with a system message.
 
 ### 5.4 Kanban seeding
 
