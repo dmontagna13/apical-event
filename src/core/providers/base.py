@@ -70,6 +70,7 @@ class ProviderAdapter(Protocol):
         model: str,
         tools: list[ToolDefinition] | None = None,
         response_format: dict[str, Any] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> CompletionResult:
         """Execute a completion call."""
 

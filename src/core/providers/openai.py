@@ -40,6 +40,7 @@ class OpenAIAdapter:
         model: str,
         tools: list[ToolDefinition] | None = None,
         response_format: dict[str, Any] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> CompletionResult:
         """Execute a chat completion call."""
 
@@ -65,6 +66,8 @@ class OpenAIAdapter:
                 }
                 for tool in tools
             ]
+            if tool_choice is not None:
+                payload["tool_choice"] = tool_choice
         if response_format:
             payload["response_format"] = response_format
 

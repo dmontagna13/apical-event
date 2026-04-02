@@ -21,6 +21,8 @@ from core.schemas import AgentTurn, RollCall, SessionPacket
 from core.schemas.constants import AGENT_TIMEOUT_SECONDS
 from core.schemas.enums import SessionState, SessionSubstate, TurnType
 from orchestration.engine.graph import build_graph
+from orchestration.engine.nodes.aggregation import run_agent_aggregation
+from orchestration.engine.nodes.moderator import run_moderator_turn
 from orchestration.engine.state import RUNTIME_KEY, strip_runtime
 from orchestration.tools.definitions import get_tool_definitions
 
@@ -70,6 +72,14 @@ async def start_session(
     state["substate"] = SessionSubstate.AGENT_AGGREGATION.value
     save_state(session_dir, strip_runtime(state))
 
+    state = await run_agent_aggregation(session_dir, state, broadcast_fn)
+    save_state(session_dir, strip_runtime(state))
+
+    state = await run_moderator_turn(session_dir, state, broadcast_fn, providers_config)
+    save_state(session_dir, strip_runtime(state))
+    if state.get("state") == SessionState.ERROR.value:
+        return
+
     queue = _human_gate_queues.setdefault(session_id, asyncio.Queue())
     state[RUNTIME_KEY] = {
         "data_root": data_root,
@@ -78,7 +88,7 @@ async def start_session(
     }
 
     graph = build_graph()
-    await graph.ainvoke(state, config={"entry_point": "agent_aggregation"})
+    await graph.ainvoke(state, config={"entry_point": "human_gate"})
 
 
 async def resume_session(
@@ -257,10 +267,7 @@ async def _dispatch_init_role(
         user_message = _build_moderator_init_message(packet)
     else:
         system_prompt = assemble_agent_prompt(packet, role)
-        user_message = (
-            "The session is beginning. You will receive your first question shortly. "
-            "Briefly introduce yourself in your assigned role and confirm you are ready."
-        )
+        user_message = _build_agent_init_message(packet)
 
     messages = [
         Message(role="system", content=system_prompt),
@@ -359,7 +366,24 @@ def _build_moderator_init_message(packet: SessionPacket) -> str:
         f"Objective: {packet.objective}\n\n"
         f"Agenda:\n{agenda_lines}\n\n"
         "Begin the session. Greet the facilitator, summarize the agenda, and indicate "
-        "that you are waiting for the panel's opening positions."
+        "that you are waiting for the panel's opening positions.\n\n"
+        "Do not call tools or propose action cards yet. Wait for the bundled opening "
+        "positions from the background agents before dispatching any follow-ups."
+    )
+
+
+def _build_agent_init_message(packet: SessionPacket) -> str:
+    if packet.agenda:
+        first = packet.agenda[0]
+        question_line = f"{first.question_id}: {first.text}"
+    else:
+        question_line = packet.objective
+    return (
+        "The session is beginning. Provide your opening position on the first agenda question "
+        "below. Use Decision IDs from the Decision Inventory where relevant.\n\n"
+        f"{question_line}\n\n"
+        "Do not paste or quote the context documents or template headers. Respond with your "
+        "analysis only."
     )
 
 
@@ -406,14 +430,11 @@ def _fill_missing_init_turns(session_dir: Path, state: dict) -> None:
         journal = read_journal(session_dir, role.role_id)
         if journal.turns:
             continue
-        user_message = (
-            _build_moderator_init_message(packet)
-            if role.is_moderator
-            else (
-                "The session is beginning. You will receive your first question shortly. "
-                "Briefly introduce yourself in your assigned role and confirm you are ready."
+            user_message = (
+                _build_moderator_init_message(packet)
+                if role.is_moderator
+                else _build_agent_init_message(packet)
             )
-        )
         agent_turn = AgentTurn(
             turn_id=uuid4(),
             session_id=state["session_id"],

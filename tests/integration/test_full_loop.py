@@ -21,10 +21,8 @@ from core.journals import (
 from core.providers.base import CompletionResult, ToolCall
 from core.schemas import KanbanBoard
 from core.schemas.enums import SessionState, SessionSubstate, TurnType
-from orchestration.engine.nodes.aggregation import agent_aggregation_node
 from orchestration.engine.nodes.dispatch import run_agent_dispatch
 from orchestration.engine.nodes.human_gate import process_gate_event
-from orchestration.engine.nodes.moderator import run_moderator_turn
 from orchestration.engine.runner import start_session
 from orchestration.engine.state import RUNTIME_KEY, strip_runtime
 
@@ -63,7 +61,7 @@ async def test_full_cycle_one_flow(tmp_data_root, valid_packet, valid_roll_call)
     release_init = asyncio.Event()
 
     class _ScriptedProvider:
-        async def complete(self, messages, model, tools=None, response_format=None):
+        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
             if tools:
                 tool_call = ToolCall(
                     name="generate_action_cards",
@@ -120,7 +118,7 @@ async def test_full_cycle_one_flow(tmp_data_root, valid_packet, valid_roll_call)
 
     class _FakeGraph:
         async def ainvoke(self, state, config=None):
-            await agent_aggregation_node(state)
+            assert config["entry_point"] == "human_gate"
             return state
 
     with (
@@ -158,17 +156,10 @@ async def test_full_cycle_one_flow(tmp_data_root, valid_packet, valid_roll_call)
 
     state_payload = json.loads((session_dir / "state.json").read_text())
     assert state_payload["is_cycle_one"] is False
-    assert state_payload["substate"] == SessionSubstate.MODERATOR_TURN.value
+    assert state_payload["substate"] == SessionSubstate.HUMAN_GATE.value
 
     state = json.loads((session_dir / "state.json").read_text())
     state["session_dir"] = str(session_dir)
-    providers_config = {
-        assignment.provider: dummy_cfg for assignment in valid_roll_call.assignments
-    }
-    with patch("orchestration.engine.nodes.moderator.get_adapter", return_value=provider):
-        state = await run_moderator_turn(session_dir, state, broadcast_fn, providers_config)
-    save_state(session_dir, strip_runtime(state))
-
     mod_journal = read_journal(session_dir, moderator_id)
     assert len(mod_journal.turns) == 2
     assert state["pending_action_cards"]

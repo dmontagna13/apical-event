@@ -50,6 +50,7 @@ def mock_provider() -> ProviderAdapter:
             model: str,
             tools: list[ToolDefinition] | None = None,
             response_format: dict | None = None,
+            tool_choice: str | dict | None = None,
         ) -> CompletionResult:
             return CompletionResult(
                 text="mock",

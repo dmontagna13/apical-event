@@ -228,6 +228,33 @@ export function Workbench(): JSX.Element {
     setMessages((prev) => [...prev, entry]);
   }, []);
 
+  const mergeMessages = useCallback((nextMessages: ChatEntry[]) => {
+    setMessages((prev) => {
+      if (prev.length === 0) {
+        return nextMessages;
+      }
+      const prevCounts = new Map<string, number>();
+      prev.forEach((msg) => {
+        const key = `${msg.role}|${msg.roleId ?? ""}|${msg.content}`;
+        prevCounts.set(key, (prevCounts.get(key) ?? 0) + 1);
+      });
+      const seenCounts = new Map<string, number>();
+      const merged = [...prev];
+      nextMessages.forEach((msg) => {
+        const key = `${msg.role}|${msg.roleId ?? ""}|${msg.content}`;
+        const prevCount = prevCounts.get(key) ?? 0;
+        const seen = seenCounts.get(key) ?? 0;
+        if (seen < prevCount) {
+          seenCounts.set(key, seen + 1);
+          return;
+        }
+        seenCounts.set(key, seen + 1);
+        merged.push(msg);
+      });
+      return merged;
+    });
+  }, []);
+
   const resetQueuedIfNeeded = useCallback((nextSubstate: SessionSubstate | null) => {
     if (nextSubstate !== "AGENT_DISPATCH" && nextSubstate !== "AGENT_AGGREGATION") {
       setQueuedMessages([]);
@@ -261,11 +288,11 @@ export function Workbench(): JSX.Element {
           syncQuizzes(data.pending_quizzes);
         }
         if (data.chat_history) {
-          setMessages(buildMessagesFromHistory(data.chat_history));
+          mergeMessages(buildMessagesFromHistory(data.chat_history));
         }
       })
       .catch((error: Error) => pushToast(error.message, "error"));
-  }, [buildMessagesFromHistory, pushToast, sessionId, syncCards, syncQuizzes]);
+  }, [buildMessagesFromHistory, mergeMessages, pushToast, sessionId, syncCards, syncQuizzes]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -301,7 +328,7 @@ export function Workbench(): JSX.Element {
           });
         });
       });
-      setMessages([...baseMessages, ...bundleMessages]);
+      mergeMessages([...baseMessages, ...bundleMessages]);
       resetQueuedIfNeeded(data.substate);
     };
 
@@ -429,6 +456,7 @@ export function Workbench(): JSX.Element {
   }, [
     appendMessage,
     buildMessagesFromHistory,
+    mergeMessages,
     pushToast,
     resetQueuedIfNeeded,
     sessionId,

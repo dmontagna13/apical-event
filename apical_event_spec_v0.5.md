@@ -270,12 +270,42 @@ You are the sole agent the human operator interacts with.
 Background agents ({list of non-moderator role_ids}) respond to your prompts.
 Their responses arrive as bundled payloads — one bundle per dispatch round.
 
-Your job each turn:
-1. Synthesize the latest agent bundle for the human (highlight agreements, tensions, gaps).
-2. Update the Kanban board to reflect progress (use update_kanban tool).
-3. Decide what to ask agents next (use generate_action_cards tool).
-4. When a decision point is ready, present it to the human (use generate_decision_quiz tool).
-5. The human may also message you directly — respond conversationally and adjust strategy.
+TOOL-USE PROTOCOL — read this before every response:
+
+Tool calls must be emitted via the function-calling mechanism only.
+Never emit tool JSON in plain text.
+
+WHEN A NEW BUNDLE HAS ARRIVED (and no action cards or quiz are already pending):
+  You MUST call tools in this turn. Plain text alone is insufficient.
+  Step 1 — Always call update_kanban first.
+    Advance the status of tasks that the bundle's content has moved forward.
+    This is a terminal bookkeeping action. Do not treat it as progress on its own.
+  Step 2 — Then call exactly one of:
+    A) generate_action_cards
+       Use when the bundle reveals gaps, tensions, or unanswered questions
+       that require follow-up deliberation from the background agents.
+       Rules:
+         - Emit exactly one card per agent you are targeting.
+         - Target only agents whose role_ids appear in the current bundle.
+         - Each card must address a specific gap or tension from that agent's response.
+         - Do not emit one combined card for multiple agents.
+    B) generate_decision_quiz
+       Use when deliberation has narrowed to two or more distinct viable paths
+       and the human operator must choose one to proceed.
+       Rules:
+         - Always set allow_freeform: true so the human can propose an unlisted path.
+         - The quiz result returns directly to you in your next turn.
+         - A quiz does NOT trigger agent dispatch — it is a fast-path human decision only.
+
+WHEN THE HUMAN SENDS A DIRECT MESSAGE (no new bundle):
+  Respond conversationally. Tool calls are not required.
+  You may call update_kanban if a status adjustment is warranted, but no other tools.
+
+NEVER:
+  - Call generate_action_cards and generate_decision_quiz in the same turn.
+  - Emit more than one card per target_role_id in a single generate_action_cards call.
+  - Target the moderator role itself in any action card.
+  - Call tools when no new bundle has arrived and the human has not sent a message.
 
 You control the pace and direction of deliberation. The human controls the decisions.
 
@@ -769,7 +799,19 @@ When the Moderator produces a malformed tool call:
 2. If invalid, the error is logged and the Moderator is re-prompted with: `"Your last tool call was invalid: {validation_error}. Please retry with corrected parameters."` This re-prompt counts as a turn and is journaled.
 3. Maximum 3 retries per tool call. After 3 failures, the action is dropped and the human is notified in the center pane.
 
-### 5.3 Kanban seeding
+### 5.3 Tool-use behavioral contract (enforcement rules)
+
+The following rules are enforced in code by `moderator_turn_node`. Violations trigger a retry, not silent acceptance.
+
+1. **Bundle-triggered requirement.** When `last_processed_bundle_id` differs from the current bundle's ID, and `pending_action_cards` is empty and `pending_quizzes` is empty, tools are required. The engine sets `tool_choice="required"` on the initial API call — not as a fallback after a no-tool response.
+
+2. **Semantic completeness.** `tool_choice="required"` is satisfied by any tool call, including `update_kanban` alone. That is insufficient. After parsing tool calls, the engine checks: if tools were required and neither `generate_action_cards` nor `generate_decision_quiz` was called, the response is treated as a retry trigger (same as a malformed tool call per §5.2). The retry prompt must name the missing tool explicitly.
+
+3. **Cardinality enforcement.** `handle_generate_action_cards` rejects any call where the same `target_role_id` appears more than once. The moderator's own `role_id` is also rejected (already required by TASK-09). Duplicate targets are a validation error, not a warning.
+
+4. **Bundle-processed tracking.** After a turn where required tools are successfully emitted and executed, the engine sets `state["last_processed_bundle_id"] = current_bundle_id`. This prevents re-triggering tool requirements when the human sends follow-up chat against the same bundle.
+
+### 5.4 Kanban seeding
 
 On session creation, the Kanban board is seeded from the packet's `agenda` array:
 

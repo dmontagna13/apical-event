@@ -78,7 +78,7 @@ def _mock_provider(text: str = "Moderator response.", tool_calls: list | None = 
     """Return a mock ProviderAdapter."""
 
     class _Mock:
-        async def complete(self, messages, model, tools=None, response_format=None):
+        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
             return CompletionResult(
                 text=text,
                 tool_calls=tool_calls or [],
@@ -165,7 +165,7 @@ async def test_start_session_dispatches_all_roles_in_parallel(
     release = asyncio.Event()
 
     class _BlockingProvider:
-        async def complete(self, messages, model, tools=None, response_format=None):
+        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
             started["count"] += 1
             if started["count"] == expected_calls:
                 all_started.set()
@@ -186,10 +186,9 @@ async def test_start_session_dispatches_all_roles_in_parallel(
 
     class _FakeGraph:
         async def ainvoke(self, state, config=None):
-            assert config["entry_point"] == "agent_aggregation"
+            assert config["entry_point"] == "human_gate"
             seen["substate"] = state.get("substate")
             seen["is_cycle_one"] = state.get("is_cycle_one")
-            await agent_aggregation_node(state)
             return state
 
         def get_graph(self):
@@ -207,8 +206,8 @@ async def test_start_session_dispatches_all_roles_in_parallel(
         release.set()
         await task
 
-    assert started["count"] == expected_calls
-    assert seen["substate"] == SessionSubstate.AGENT_AGGREGATION.value
+    assert started["count"] == expected_calls + 1
+    assert seen["substate"] == SessionSubstate.HUMAN_GATE.value
     assert seen["is_cycle_one"] is True
 
     for role in valid_packet.roles:
@@ -662,7 +661,7 @@ async def test_moderator_turn_invalid_tool_call_retries(tmp_session_dir, valid_r
     call_count = 0
 
     class _CountingProvider:
-        async def complete(self, messages, model, tools=None, response_format=None):
+        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
             nonlocal call_count
             call_count += 1
             return CompletionResult(
@@ -704,7 +703,7 @@ async def test_moderator_turn_api_failure_sets_error(tmp_session_dir, valid_roll
     broadcast_fn = AsyncMock()
 
     class _FailingProvider:
-        async def complete(self, messages, model, tools=None, response_format=None):
+        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
             raise ProviderError("mock", 500, "Internal error")
 
         async def health_check(self):

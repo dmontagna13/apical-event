@@ -31,7 +31,7 @@ def _make_provider(text: str = "canned summary") -> ProviderAdapter:
         def __init__(self) -> None:
             self.call_count = 0
 
-        async def complete(self, messages, model, tools=None, response_format=None):
+        async def complete(self, messages, model, tools=None, response_format=None, tool_choice=None):
             self.call_count += 1
             return CompletionResult(
                 text=text, tool_calls=[], usage={}, finish_reason="stop", latency_ms=0

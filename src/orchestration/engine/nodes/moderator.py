@@ -155,6 +155,29 @@ async def run_moderator_turn(
     )
     append_turn(session_dir, moderator_role.role_id, moderator_turn)
 
+    tool_calls = list(result.tool_calls)
+    if not tool_calls:
+        follow_up_prompt = (
+            "You must now call tools. Use update_kanban to reflect current progress and "
+            "generate_action_cards for the next agent prompts. If a decision point is ready, "
+            "use generate_decision_quiz. Respond with tool calls only; no additional text."
+        )
+        follow_up_messages = [
+            *messages,
+            Message(role="assistant", content=result.text or ""),
+            Message(role="user", content=follow_up_prompt),
+        ]
+        follow_up_result = await _call_once(
+            adapter,
+            follow_up_messages,
+            model,
+            system_prompt,
+            tools,
+            tool_choice="required",
+        )
+        if follow_up_result is not None and follow_up_result.tool_calls:
+            tool_calls = list(follow_up_result.tool_calls)
+
     # Store the moderator's text in chat_history
     if result.text:
         state.setdefault("chat_history", []).append({"role": "moderator", "content": result.text})
@@ -171,7 +194,7 @@ async def run_moderator_turn(
     tool_messages = [{"role": m.role, "content": m.content} for m in messages]
     tool_messages.append({"role": "assistant", "content": result.text or ""})
 
-    for tool_call in result.tool_calls:
+    for tool_call in tool_calls:
         errors = validate_tool_call(tool_call.name, tool_call.arguments, state)
 
         attempt_count = 0
@@ -301,13 +324,14 @@ async def _call_once(
     model: str,
     system_prompt: str,
     tools: list,
+    tool_choice: str | dict | None = None,
 ) -> object | None:
     """Attempt a single provider call. Returns None on ProviderError."""
 
     try:
         system_msg = Message(role="system", content=system_prompt)
         full_messages = [system_msg] + list(messages)
-        return await adapter.complete(full_messages, model, tools=tools)
+        return await adapter.complete(full_messages, model, tools=tools, tool_choice=tool_choice)
     except ProviderError as exc:
         if exc.status_code == 400:
             logger.error(
